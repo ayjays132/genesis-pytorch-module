@@ -140,6 +140,16 @@ class IntegratedLearningModule(nn.Module):
             logits = self.gate.filter_logits(logits, module=self)  # uses the registered mask buffer
         return logits, raw_logits, final_hidden
 
+    def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
+        """Dynamically adjust learning rate based on novelty_score."""
+        novelty_val = float(self.novelty_score)
+        progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
+        lr = base_lr + (max_lr - base_lr) * progress
+        lr = max(min_lr, min(max_lr, lr))
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        return lr
+
     def training_step(self, x, target, optimizer, criterion):
         """
         Perform one training step: forward pass, loss computation, backward pass with amplifier, 
@@ -155,6 +165,8 @@ class IntegratedLearningModule(nn.Module):
         novelty = loss_main.detach()
         # Update novelty_score EMA (Exponential Moving Average)
         self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
+        # Adjust learning rate according to novelty
+        self.update_learning_rate(optimizer)
         # Backpropagate loss
         grad_hidden = torch.autograd.grad(loss_main, final_hidden, retain_graph=True)[0]
         # Sticky Learning Amplifier: detect high-gradient hidden units and amplify
@@ -260,6 +272,16 @@ class GenesisPlugin(nn.Module):
             logits = self.gate.filter_logits(logits, module=self)
         return logits, raw_logits, final_hidden
 
+    def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
+        """Adjust optimizer learning rate using the current novelty_score."""
+        novelty_val = float(self.novelty_score)
+        progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
+        lr = base_lr + (max_lr - base_lr) * progress
+        lr = max(min_lr, min(max_lr, lr))
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        return lr
+
     def training_step(self, hidden, target, optimizer, criterion):
         """Perform a training step using provided hidden states."""
         self.train()
@@ -268,6 +290,7 @@ class GenesisPlugin(nn.Module):
         loss_main = criterion(logits, target)
         novelty = loss_main.detach()
         self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
+        self.update_learning_rate(optimizer)
         grad_hidden = torch.autograd.grad(loss_main, final_hidden, retain_graph=True)[0]
         if grad_hidden is not None:
             grad_norm = grad_hidden.abs().mean(dim=0)

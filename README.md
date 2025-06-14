@@ -175,6 +175,7 @@ This is the main module that integrates all GENESIS components. For demonstratio
 *   **`training_step(self, x, target, optimizer, criterion)`:** This method encapsulates a single training iteration, demonstrating the interplay of GENESIS components.
     *   **Main Loss Calculation:** Computes `loss_main` from the model's predictions and targets.
     *   **Novelty Metric:** `novelty_score` is updated as an Exponential Moving Average (EMA) of the `loss_main`. This serves as a simple proxy for the model's learning progress and can be used for exponential learning curve scheduling.
+    *   **Adaptive Learning Rate:** `update_learning_rate(optimizer, base_lr, min_lr, max_lr)` adjusts the optimizer's learning rate based on the current `novelty_score`. When novelty drops, indicating familiar patterns, the learning rate ramps toward `max_lr`, mirroring the "vocabulary explosion" phase in infant learning.
     *   **Backward Pass:** `loss_main.backward(retain_graph=True)` is called. `retain_graph=True` is essential because the Sticky Learning Amplifier needs access to `final_hidden.grad` after the main backward pass.
     *   **Sticky Learning Amplifier Logic:**
         *   `grad_hidden = final_hidden.grad`: Retrieves the gradients with respect to the final hidden state.

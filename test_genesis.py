@@ -49,16 +49,21 @@ def test_genesis_module():
     initial_importance_scores = model.importance_scores.clone().detach()
     initial_novelty_score = model.novelty_score.clone().detach()
 
-    # Run a few training steps to observe changes
+    # Run a few training steps to observe changes and capture learning rate update
+    initial_lr = optim.param_groups[0]["lr"]
+    lr_after_first = None
     for i in range(5):
         y_batch = torch.randint(0, output_dim, (4,)).to(device)
         loss_val = model.training_step(x_batch, y_batch, optim, crit)
+        if i == 0:
+            lr_after_first = optim.param_groups[0]["lr"]
         print(f"  Step {i+1}, Loss: {loss_val:.4f}, Novelty Score: {model.novelty_score.item():.4f}")
 
     # Check if anchor_bias and importance_scores have changed (indicating amplifier activity)
     assert not torch.equal(initial_anchor_bias, model.anchor_bias), "Anchor bias did not change after training steps."
     assert not torch.equal(initial_importance_scores, model.importance_scores), "Importance scores did not change after training steps."
     assert not torch.equal(initial_novelty_score, model.novelty_score), "Novelty score did not change after training steps."
+    assert lr_after_first is not None and lr_after_first != initial_lr, "Learning rate was not updated by adaptive scheduler."
     print("Training steps successful: Anchor bias, importance scores, and novelty score updated.")
 
     # Test 4: Replay buffer functionality
