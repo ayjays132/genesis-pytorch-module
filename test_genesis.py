@@ -8,6 +8,23 @@ from genesis_module import (
     attach_genesis_plugin,
 )
 
+
+class StepCounterOptimizer(torch.optim.Adam):
+    """Optimizer that counts how many times step() and zero_grad() are called."""
+
+    def __init__(self, params, lr=0.001):
+        super().__init__(params, lr=lr)
+        self.step_calls = 0
+        self.zero_calls = 0
+
+    def step(self, closure=None):
+        self.step_calls += 1
+        return super().step(closure)
+
+    def zero_grad(self, set_to_none: bool = False):
+        self.zero_calls += 1
+        return super().zero_grad(set_to_none=set_to_none)
+
 def test_genesis_module():
     print("Starting GENESIS module test...")
 
@@ -124,6 +141,51 @@ def test_attach_plugin():
     assert base.genesis_logits.shape == torch.Size([2, 5])
     handle.remove()
     print("attach_genesis_plugin helper works correctly")
+
+
+def test_replay_gradients_are_fresh():
+    """Ensure replay updates do not reuse stale gradients."""
+    input_dim = 10
+    hidden_dim = 16
+    output_dim = 20
+
+    model = IntegratedLearningModule(input_dim, hidden_dim, output_dim)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
+    optimizer = StepCounterOptimizer(model.parameters(), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+
+    x_batch = torch.randn(2, 3, input_dim).to(device)
+
+    for i in range(10):
+        y_batch = torch.randint(0, output_dim, (2,)).to(device)
+        model.training_step(x_batch, y_batch, optimizer, criterion)
+
+    assert optimizer.step_calls == 10
+    assert optimizer.zero_calls == 10
+
+
+def test_plugin_replay_gradients_are_fresh():
+    """Same check for GenesisPlugin."""
+    hidden_dim = 16
+    output_dim = 20
+
+    plugin = GenesisPlugin(hidden_dim, output_dim)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    plugin = plugin.to(device)
+
+    optimizer = StepCounterOptimizer(plugin.parameters(), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+
+    hidden = torch.randn(2, hidden_dim).to(device)
+
+    for i in range(10):
+        y = torch.randint(0, output_dim, (2,)).to(device)
+        plugin.training_step(hidden, y, optimizer, criterion)
+
+    assert optimizer.step_calls == 10
+    assert optimizer.zero_calls == 10
 
 if __name__ == "__main__":
     test_genesis_module()

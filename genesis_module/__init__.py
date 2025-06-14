@@ -205,14 +205,6 @@ class IntegratedLearningModule(nn.Module):
             reg_loss = torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
             reg_loss = 0.1 * reg_loss
             reg_loss.backward(retain_graph=True)
-        # Optimizer step for main model parameters
-        # Clip gradients to maintain stable GradNorm (if any grad is too large)
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
-        optimizer.step()
-        self.anchor_bias_ref = self.anchor_bias.detach().clone()
-        # After weight update, one could apply an EWC-like regularization manually:
-        # self.apply_consolidation()
-        # (Not fully shown; would add loss term for (param - param_ref)^2 * importance_scores)
         # Add experience to replay buffer (pick a random sample from batch to store to limit size)
         idx = torch.randint(0, x.size(0), (1,)).item()
         priority = float(loss_main.detach())
@@ -227,9 +219,12 @@ class IntegratedLearningModule(nn.Module):
                 replay_logits = self.decoder(replay_h + self.anchor_bias)  # include anchor bias here as well
                 # No gating on replay loss to ensure we reinforce raw mapping
                 loss_replay = criterion(replay_logits, replay_t)
+                # Accumulate replay gradients with main gradients
                 loss_replay.backward()
-                # Apply small weight updates for replay (learning on old sample)
-                optimizer.step()  # second optimizer step for replay (could also accumulate gradients and do one step)
+        # Clip gradients to maintain stable GradNorm (if any grad is too large)
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
+        optimizer.step()
+        self.anchor_bias_ref = self.anchor_bias.detach().clone()
         # Total loss for reporting (main + any replay if applied)
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
@@ -324,9 +319,6 @@ class GenesisPlugin(nn.Module):
         if self.importance_scores.sum() > 0:
             reg_loss = 0.1 * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
             reg_loss.backward(retain_graph=True)
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
-        optimizer.step()
-        self.anchor_bias_ref = self.anchor_bias.detach().clone()
         idx = torch.randint(0, hidden.size(0), (1,)).item()
         priority = float(loss_main.detach())
         self.replay_buffer.add(final_hidden[idx], target[idx], priority=priority)
@@ -337,8 +329,11 @@ class GenesisPlugin(nn.Module):
             if replay_h is not None:
                 replay_logits = self.decoder(replay_h + self.anchor_bias)
                 loss_replay = criterion(replay_logits, replay_t)
+                # Accumulate replay gradients with main gradients
                 loss_replay.backward()
-                optimizer.step()
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
+        optimizer.step()
+        self.anchor_bias_ref = self.anchor_bias.detach().clone()
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
 
