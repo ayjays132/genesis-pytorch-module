@@ -1,0 +1,8 @@
+README.md
+setup.py
+genesis_module/__init__.py
+genesis_module.egg-info/PKG-INFO
+genesis_module.egg-info/SOURCES.txt
+genesis_module.egg-info/dependency_links.txt
+genesis_module.egg-info/requires.txt
+genesis_module.egg-info/top_level.txt
