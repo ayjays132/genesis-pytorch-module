@@ -53,7 +53,8 @@ def test_genesis_module():
     initial_lr = optim.param_groups[0]["lr"]
     lr_after_first = None
     for i in range(5):
-        y_batch = torch.randint(0, output_dim, (4,)).to(device)
+        # Avoid disallowed tokens to keep the loss within a reasonable range
+        y_batch = torch.randint(3, output_dim, (4,)).to(device)
         loss_val = model.training_step(x_batch, y_batch, optim, crit)
         if i == 0:
             lr_after_first = optim.param_groups[0]["lr"]

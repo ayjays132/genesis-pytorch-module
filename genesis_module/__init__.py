@@ -161,6 +161,8 @@ class IntegratedLearningModule(nn.Module):
         optimizer.zero_grad()
         # Forward pass
         logits, raw_logits, final_hidden = self.forward(x)
+        # Retain gradient on final_hidden so the amplifier can inspect it
+        final_hidden.retain_grad()
         # Calculate main task loss
         loss_main = criterion(logits, target)
         # Compute novelty metric (e.g. current batch average loss as proxy for novelty)
@@ -290,6 +292,8 @@ class GenesisPlugin(nn.Module):
         self.train()
         optimizer.zero_grad()
         logits, raw_logits, final_hidden = self.forward(hidden)
+        # Retain gradient on final_hidden so the amplifier can access it
+        final_hidden.retain_grad()
         loss_main = criterion(logits, target)
         novelty = loss_main.detach()
         self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
