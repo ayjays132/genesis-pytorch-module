@@ -103,6 +103,8 @@ class IntegratedLearningModule(nn.Module):
         # Sticky amplifier persistence: anchor biases and importance matrix
         # Anchor bias for hidden state (1D parameter of length hidden_size)
         self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
+        # Persistent reference of anchor bias for consolidation
+        self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
         # Importance scores for weights (for simplicity, one score per hidden unit for now)
         # This can be extended to per-weight matrix; here we track importance per hidden unit
         self.register_buffer("importance_scores", torch.zeros(hidden_size))
@@ -168,7 +170,8 @@ class IntegratedLearningModule(nn.Module):
         # Adjust learning rate according to novelty
         self.update_learning_rate(optimizer)
         # Backpropagate loss
-        grad_hidden = torch.autograd.grad(loss_main, final_hidden, retain_graph=True)[0]
+        loss_main.backward(retain_graph=True)
+        grad_hidden = final_hidden.grad
         # Sticky Learning Amplifier: detect high-gradient hidden units and amplify
         if grad_hidden is not None:
             # Compute gradient norm per hidden unit (across batch)
@@ -177,24 +180,22 @@ class IntegratedLearningModule(nn.Module):
             threshold = grad_norm.mean() + 2 * grad_norm.std()  # e.g., 2 std above mean as threshold
             high_grad_mask = (grad_norm > threshold).float()  # 1 for important units
             if high_grad_mask.sum().item() > 0:
-                # Amplify: Increase corresponding anchor_bias and importance_scores
-                # Use current hidden activation as a reference for bias direction
-                # (average across batch for each unit)
+                # Amplify: increase anchor_bias for salient units
                 avg_hidden = final_hidden.detach().mean(dim=0)
-                # Update anchor bias: add a fraction of avg_hidden for units with high_grad
-                amp_rate = 0.1  # small rate to update bias (hyperparameter)
+                amp_rate = 0.1
                 self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
-                # Update importance scores for persistence regularization
-                self.importance_scores += high_grad_mask  # accumulate importance count (could also use grad_norm^2)
+                self.importance_scores += high_grad_mask
                 # (We could also amplify gradient itself here or adjust learning rates dynamically if needed)
-        # Optimizer step for main model parameters (with amplified adjustments already applied to gradients)
-        # Note: anchor_bias is a parameter, so its gradient (if any) was computed; we manually modified it above.
-        # We might want to zero its grad after manual update to avoid double counting, but since we updated .data, its grad is unchanged.
-        # Simulate weight consolidation regularization: apply penalty for important weights deviating from reference.
-        # For simplicity, suppose reference weights are initial weights (or we could store a snapshot). Not fully implemented here.
+        # Consolidation regularization to preserve important anchor_bias values
+        if self.importance_scores.sum() > 0:
+            reg_loss = torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
+            reg_loss = 0.1 * reg_loss
+            reg_loss.backward(retain_graph=True)
+        # Optimizer step for main model parameters
         # Clip gradients to maintain stable GradNorm (if any grad is too large)
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
+        self.anchor_bias_ref = self.anchor_bias.detach().clone()
         # After weight update, one could apply an EWC-like regularization manually:
         # self.apply_consolidation()
         # (Not fully shown; would add loss term for (param - param_ref)^2 * importance_scores)
@@ -220,11 +221,12 @@ class IntegratedLearningModule(nn.Module):
         return total_loss
 
     # (Optional) A method to apply consolidation regularization if we maintained reference weights
-    def apply_consolidation(self, lambda_reg=1.0):
-        # Pseudocode: for each param, if importance_scores for corresponding hidden unit is high, 
-        # add gradient toward param_ref (not implemented fully due to simplicity of importance in this example).
-        # This would be integrated in loss or after backward.
-        pass
+    def apply_consolidation(self, lambda_reg=0.1):
+        """Apply consolidation penalty to anchor_bias based on importance scores."""
+        if self.importance_scores.sum() == 0:
+            return torch.tensor(0.0, device=self.anchor_bias.device)
+        penalty = lambda_reg * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
+        return penalty
 
 
 
@@ -254,6 +256,7 @@ class GenesisPlugin(nn.Module):
         self.decoder = nn.Linear(hidden_size, output_size)
         self.replay_buffer = SelfReplayBuffer(max_size=replay_size)
         self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
+        self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
         self.register_buffer("importance_scores", torch.zeros(hidden_size))
         self.gate = None
         if vocab_size:
@@ -291,7 +294,8 @@ class GenesisPlugin(nn.Module):
         novelty = loss_main.detach()
         self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
         self.update_learning_rate(optimizer)
-        grad_hidden = torch.autograd.grad(loss_main, final_hidden, retain_graph=True)[0]
+        loss_main.backward(retain_graph=True)
+        grad_hidden = final_hidden.grad
         if grad_hidden is not None:
             grad_norm = grad_hidden.abs().mean(dim=0)
             threshold = grad_norm.mean() + 2 * grad_norm.std()
@@ -301,8 +305,12 @@ class GenesisPlugin(nn.Module):
                 amp_rate = 0.1
                 self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
                 self.importance_scores += high_grad_mask
+        if self.importance_scores.sum() > 0:
+            reg_loss = 0.1 * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
+            reg_loss.backward(retain_graph=True)
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
+        self.anchor_bias_ref = self.anchor_bias.detach().clone()
         idx = torch.randint(0, hidden.size(0), (1,)).item()
         self.replay_buffer.add(final_hidden[idx], target[idx])
         self.steps += 1
@@ -316,6 +324,13 @@ class GenesisPlugin(nn.Module):
                 optimizer.step()
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
+
+    def apply_consolidation(self, lambda_reg=0.1):
+        """Return consolidation penalty based on importance scores."""
+        if self.importance_scores.sum() == 0:
+            return torch.tensor(0.0, device=self.anchor_bias.device)
+        penalty = lambda_reg * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
+        return penalty
 
 
 from .integration import attach_genesis_plugin
