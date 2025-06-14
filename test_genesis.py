@@ -140,7 +140,12 @@ def test_attach_plugin():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     base = base.to(device)
 
-    # Plugin remains on CPU; attach_genesis_plugin should move it to `device`.
+    # Force plugin on the opposite device (if possible) to test relocation
+    other_device = torch.device("cpu")
+    if device.type == "cpu" and torch.cuda.is_available():
+        other_device = torch.device("cuda")
+    plugin = plugin.to(other_device)
+
     handle = attach_genesis_plugin(base, plugin, layer_name="0")
     assert next(plugin.parameters()).device == device
 
@@ -226,6 +231,79 @@ def test_plugin_replay_gradients_are_fresh():
     assert optimizer.zero_calls == 10
 
 
+def test_apply_consolidation_penalty():
+    """Penalty should be zero when no importance and positive otherwise."""
+    model = IntegratedLearningModule(4, 6, 3)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
+    # No importance -> zero penalty
+    model.importance_scores.zero_()
+    penalty_zero = model.apply_consolidation(lambda_reg=1.0)
+    assert penalty_zero.item() == 0.0
+
+    # Set importance on one unit and adjust bias to incur cost
+    model.importance_scores[0] = 1.0
+    model.anchor_bias.data[0] = 0.5
+    penalty_nonzero = model.apply_consolidation(lambda_reg=1.0)
+    assert penalty_nonzero.item() > 0.0
+
+
+def test_anchor_bias_ref_update_threshold():
+    """Anchor ref should update only when gradients cross the threshold."""
+    hidden_dim = 8
+    output_dim = 3
+    plugin = GenesisPlugin(hidden_dim, output_dim)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    plugin = plugin.to(device)
+    opt = torch.optim.Adam(plugin.parameters(), lr=0.01)
+    crit = nn.CrossEntropyLoss()
+
+    hidden = torch.ones(2, hidden_dim, device=device)
+    target = torch.zeros(2, dtype=torch.long, device=device)
+
+    # Zero decoder weights to keep gradients tiny -> no update
+    plugin.decoder.weight.data.zero_()
+    plugin.decoder.bias.data.zero_()
+    ref_before = plugin.anchor_bias_ref.clone()
+    plugin.training_step(hidden, target, opt, crit)
+    assert torch.equal(ref_before, plugin.anchor_bias_ref)
+
+    # Make first output weight huge so gradients spike on hidden[0]
+    plugin.decoder.weight.data.zero_()
+    plugin.decoder.weight.data[0, 0] = 100.0
+    target.fill_(1)
+    ref_before = plugin.anchor_bias_ref.clone()
+    for _ in range(3):
+        plugin.training_step(hidden, target, opt, crit)
+        if plugin.importance_scores.sum() > 0:
+            break
+    assert plugin.importance_scores.sum() > 0
+    assert not torch.equal(ref_before, plugin.anchor_bias_ref)
+
+
+def test_replay_buffer_sampling_after_many_steps():
+    """Sampling should still work after numerous training steps."""
+    hidden_dim = 8
+    output_dim = 4
+    plugin = GenesisPlugin(hidden_dim, output_dim)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    plugin = plugin.to(device)
+
+    opt = torch.optim.Adam(plugin.parameters(), lr=0.001)
+    crit = nn.CrossEntropyLoss()
+
+    for _ in range(40):
+        h = torch.randn(3, hidden_dim).to(device)
+        y = torch.randint(0, output_dim, (3,)).to(device)
+        plugin.training_step(h, y, opt, crit)
+
+    h_sample, t_sample = plugin.replay_buffer.sample(batch_size=2, device=device)
+    assert h_sample is not None and t_sample is not None
+    assert h_sample.shape == torch.Size([2, hidden_dim])
+    assert t_sample.shape == torch.Size([2])
+
+
 def test_update_priority_affects_sampling():
     """Updating priorities should change sampling probabilities."""
     buf = SelfReplayBuffer(max_size=3)
@@ -249,6 +327,9 @@ if __name__ == "__main__":
     test_genesis_plugin()
     test_attach_plugin()
     test_attach_plugin_with_grad()
+    test_apply_consolidation_penalty()
+    test_anchor_bias_ref_update_threshold()
+    test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
 
 
