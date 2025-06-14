@@ -294,3 +294,6 @@ class GenesisPlugin(nn.Module):
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
 
+
+from .integration import attach_genesis_plugin
+

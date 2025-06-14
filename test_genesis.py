@@ -1,6 +1,12 @@
 import torch
 import torch.nn as nn
-from genesis_module import IntegratedLearningModule, SelfReplayBuffer, EthicalGate, GenesisPlugin
+from genesis_module import (
+    IntegratedLearningModule,
+    SelfReplayBuffer,
+    EthicalGate,
+    GenesisPlugin,
+    attach_genesis_plugin,
+)
 
 def test_genesis_module():
     print("Starting GENESIS module test...")
@@ -96,8 +102,23 @@ def test_genesis_plugin():
     assert len(plugin.replay_buffer.buffer) > 0
     print(f"GenesisPlugin training step loss: {loss_val:.4f}")
 
+
+def test_attach_plugin():
+    print("\nTesting attach_genesis_plugin helper")
+    base = nn.Sequential(nn.Linear(10, 16), nn.ReLU(), nn.Linear(16, 8))
+    plugin = GenesisPlugin(hidden_size=16, output_size=5, vocab_size=5)
+
+    handle = attach_genesis_plugin(base, plugin, layer_name="0")
+    x = torch.randn(2, 10)
+    _ = base(x)
+    assert hasattr(base, "genesis_logits"), "Plugin logits not attached to base model"
+    assert base.genesis_logits.shape == torch.Size([2, 5])
+    handle.remove()
+    print("attach_genesis_plugin helper works correctly")
+
 if __name__ == "__main__":
     test_genesis_module()
     test_genesis_plugin()
+    test_attach_plugin()
 
 

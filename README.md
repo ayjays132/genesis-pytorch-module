@@ -226,3 +226,34 @@ GENESIS is designed to be memory and computationally efficient:
 GENESIS represents a novel approach to enhancing AGI learning by drawing inspiration from infant cognitive development. By synergistically combining self-replay, sticky learning amplification, exponential learning curve simulation, ethical gating, and a persistence layer, the module aims to enable faster, more robust, and ethically aligned learning. Its design prioritizes memory efficiency, computational performance, and seamless integration into existing PyTorch ecosystems, paving the way for more human-like and safer artificial general intelligence.
 
 
+
+## 13. Integration with Existing Models
+
+GENESIS can be added to any PyTorch model via the `GenesisPlugin` and the helper
+function `attach_genesis_plugin`. This function registers a forward hook on a
+chosen layer, routing that layer's hidden representation through the plugin.
+
+```python
+from genesis_module import GenesisPlugin, attach_genesis_plugin
+import torch.nn as nn
+
+# Example base model
+base = nn.Sequential(
+    nn.Linear(32, 64),
+    nn.ReLU(),
+    nn.Linear(64, 10)
+)
+
+# Attach plugin to the first linear layer
+plugin = GenesisPlugin(hidden_size=64, output_size=20, vocab_size=20)
+handle = attach_genesis_plugin(base, plugin, layer_name='0')
+
+# After a forward pass, the plugin's logits are stored on the base model
+x = torch.randn(8, 32)
+_ = base(x)
+print(base.genesis_logits.shape)  # torch.Size([8, 20])
+```
+
+Call `handle.remove()` when the hook is no longer needed. This approach keeps
+the base architecture unchanged while enabling GENESIS functionality on
+intermediate representations.
