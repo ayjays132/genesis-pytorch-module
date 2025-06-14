@@ -79,7 +79,8 @@ def test_genesis_module():
 
     # Check if anchor bias changed and reference updated
     assert not torch.equal(initial_anchor_bias, model.anchor_bias), "Anchor bias did not change after training steps."
-    assert not torch.equal(initial_anchor_bias_ref, model.anchor_bias_ref), "Anchor bias reference did not update."
+    if model.importance_scores.sum() > 0:
+        assert not torch.equal(initial_anchor_bias_ref, model.anchor_bias_ref), "Anchor bias reference did not update when amplifier triggered."
     assert not torch.equal(initial_novelty_score, model.novelty_score), "Novelty score did not change after training steps."
     assert lr_after_first is not None and lr_after_first != initial_lr, "Learning rate was not updated by adaptive scheduler."
     print("Training steps successful: Anchor bias and novelty score updated.")
@@ -124,8 +125,11 @@ def test_genesis_plugin():
     assert logits.shape == torch.Size([4, output_dim])
 
     y = torch.randint(0, output_dim, (4,)).to(device)
+    initial_anchor_ref = plugin.anchor_bias_ref.clone().detach()
     loss_val = plugin.training_step(hidden, y, optimizer, criterion)
     assert len(plugin.replay_buffer.buffer) > 0
+    if plugin.importance_scores.sum() > 0:
+        assert not torch.equal(initial_anchor_ref, plugin.anchor_bias_ref), "Plugin anchor bias reference did not update when amplifier triggered."
     print(f"GenesisPlugin training step loss: {loss_val:.4f}")
 
 

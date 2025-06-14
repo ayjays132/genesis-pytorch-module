@@ -215,6 +215,7 @@ class IntegratedLearningModule(nn.Module):
         # Backpropagate loss
         loss_main.backward(retain_graph=True)
         grad_hidden = final_hidden.grad
+        amplifier_triggered = False
         # Sticky Learning Amplifier: detect high-gradient hidden units and amplify
         if grad_hidden is not None:
             # Compute gradient norm per hidden unit (across batch)
@@ -223,6 +224,7 @@ class IntegratedLearningModule(nn.Module):
             threshold = grad_norm.mean() + 2 * grad_norm.std()  # e.g., 2 std above mean as threshold
             high_grad_mask = (grad_norm > threshold).float()  # 1 for important units
             if high_grad_mask.sum().item() > 0:
+                amplifier_triggered = True
                 # Amplify: increase anchor_bias for salient units
                 avg_hidden = final_hidden.detach().mean(dim=0)
                 amp_rate = 0.1
@@ -253,7 +255,8 @@ class IntegratedLearningModule(nn.Module):
         # Clip gradients to maintain stable GradNorm (if any grad is too large)
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
-        self.anchor_bias_ref = self.anchor_bias.detach().clone()
+        if amplifier_triggered:
+            self.anchor_bias_ref = self.anchor_bias.detach().clone()
         # Total loss for reporting (main + any replay if applied)
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
@@ -336,11 +339,13 @@ class GenesisPlugin(nn.Module):
         self.update_learning_rate(optimizer)
         loss_main.backward(retain_graph=True)
         grad_hidden = final_hidden.grad
+        amplifier_triggered = False
         if grad_hidden is not None:
             grad_norm = grad_hidden.abs().mean(dim=0)
             threshold = grad_norm.mean() + 2 * grad_norm.std()
             high_grad_mask = (grad_norm > threshold).float()
             if high_grad_mask.sum().item() > 0:
+                amplifier_triggered = True
                 avg_hidden = final_hidden.detach().mean(dim=0)
                 amp_rate = 0.1
                 self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
@@ -362,7 +367,8 @@ class GenesisPlugin(nn.Module):
                 loss_replay.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
-        self.anchor_bias_ref = self.anchor_bias.detach().clone()
+        if amplifier_triggered:
+            self.anchor_bias_ref = self.anchor_bias.detach().clone()
         total_loss = loss_main.item() + loss_replay.item()
         return total_loss
 
