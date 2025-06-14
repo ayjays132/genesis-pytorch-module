@@ -268,3 +268,15 @@ print(base.genesis_logits.shape)  # torch.Size([8, 20])
 Call `handle.remove()` when the hook is no longer needed. This approach keeps
 the base architecture unchanged while enabling GENESIS functionality on
 intermediate representations.
+
+## Building the Package
+
+To create a distributable package run:
+
+```bash
+python -m build
+```
+
+This command generates `build/`, `dist/`, and `genesis_module.egg-info/`
+directories. These artifacts are ignored via `.gitignore` and should not be
+committed to the repository.

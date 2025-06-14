@@ -1,0 +1,13 @@
+# Python cache and build artifacts
+__pycache__/
+*.pyc
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Optional - environment
+.env
+.venv
+
