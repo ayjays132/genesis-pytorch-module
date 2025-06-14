@@ -126,7 +126,8 @@ class EthicalGate:
         return filtered_logits
 
 class IntegratedLearningModule(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None):
+    def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
+                 bias_decay: float = 0.999, bias_max: float = 5.0):
         """
         input_size: dimension of input features (e.g. embedding size)
         hidden_size: dimension of hidden state in the core model
@@ -144,6 +145,8 @@ class IntegratedLearningModule(nn.Module):
         # Sticky amplifier persistence: anchor biases and importance matrix
         # Anchor bias for hidden state (1D parameter of length hidden_size)
         self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
+        self.bias_decay = bias_decay
+        self.bias_max = bias_max
         # Persistent reference of anchor bias for consolidation
         self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
         # Importance scores for weights (for simplicity, one score per hidden unit for now)
@@ -200,6 +203,9 @@ class IntegratedLearningModule(nn.Module):
         """
         self.train()
         optimizer.zero_grad()
+        with torch.no_grad():
+            self.anchor_bias.mul_(self.bias_decay)
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         # Forward pass
         logits, raw_logits, final_hidden = self.forward(x)
         # Retain gradient on final_hidden so the amplifier can inspect it
@@ -255,6 +261,8 @@ class IntegratedLearningModule(nn.Module):
         # Clip gradients to maintain stable GradNorm (if any grad is too large)
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
+        with torch.no_grad():
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         if amplifier_triggered:
             self.anchor_bias_ref = self.anchor_bias.detach().clone()
         # Total loss for reporting (main + any replay if applied)
@@ -291,12 +299,15 @@ class GenesisPlugin(nn.Module):
     """
 
     def __init__(self, hidden_size, output_size, vocab_size=None,
-                 disallowed_tokens=None, replay_size=500):
+                 disallowed_tokens=None, replay_size=500,
+                 bias_decay: float = 0.999, bias_max: float = 5.0):
         super().__init__()
         self.hidden_size = hidden_size
         self.decoder = nn.Linear(hidden_size, output_size)
         self.replay_buffer = SelfReplayBuffer(max_size=replay_size)
         self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
+        self.bias_decay = bias_decay
+        self.bias_max = bias_max
         self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
         self.register_buffer("importance_scores", torch.zeros(hidden_size))
         self.gate = None
@@ -330,6 +341,9 @@ class GenesisPlugin(nn.Module):
         """Perform a training step using provided hidden states."""
         self.train()
         optimizer.zero_grad()
+        with torch.no_grad():
+            self.anchor_bias.mul_(self.bias_decay)
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         logits, raw_logits, final_hidden = self.forward(hidden)
         # Retain gradient on final_hidden so the amplifier can access it
         final_hidden.retain_grad()
@@ -367,6 +381,8 @@ class GenesisPlugin(nn.Module):
                 loss_replay.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
+        with torch.no_grad():
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         if amplifier_triggered:
             self.anchor_bias_ref = self.anchor_bias.detach().clone()
         total_loss = loss_main.item() + loss_replay.item()

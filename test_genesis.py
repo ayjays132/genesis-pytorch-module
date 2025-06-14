@@ -322,6 +322,45 @@ def test_update_priority_affects_sampling():
 
     assert count_after > count_before, "Priority update did not affect sampling"
 
+
+def test_anchor_bias_clamped_after_many_steps_plugin():
+    """Anchor bias should remain within [-bias_max, bias_max] after repeated training."""
+    hidden_dim = 6
+    output_dim = 5
+    bias_max = 0.3
+    plugin = GenesisPlugin(hidden_dim, output_dim, bias_max=bias_max, bias_decay=0.98)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    plugin = plugin.to(device)
+    opt = torch.optim.Adam(plugin.parameters(), lr=0.01)
+    crit = nn.CrossEntropyLoss()
+
+    for _ in range(60):
+        h = torch.randn(4, hidden_dim).to(device)
+        y = torch.randint(0, output_dim, (4,)).to(device)
+        plugin.training_step(h, y, opt, crit)
+
+    assert torch.all(plugin.anchor_bias.abs() <= bias_max + 1e-6)
+
+
+def test_anchor_bias_clamped_after_many_steps_module():
+    """Same clamp check for IntegratedLearningModule."""
+    input_dim = 4
+    hidden_dim = 8
+    output_dim = 6
+    bias_max = 0.2
+    model = IntegratedLearningModule(input_dim, hidden_dim, output_dim, bias_max=bias_max, bias_decay=0.98)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=0.01)
+    crit = nn.CrossEntropyLoss()
+    x = torch.randn(3, 5, input_dim).to(device)
+
+    for _ in range(60):
+        y = torch.randint(0, output_dim, (3,)).to(device)
+        model.training_step(x, y, opt, crit)
+
+    assert torch.all(model.anchor_bias.abs() <= bias_max + 1e-6)
+
 if __name__ == "__main__":
     test_genesis_module()
     test_genesis_plugin()
@@ -331,5 +370,7 @@ if __name__ == "__main__":
     test_anchor_bias_ref_update_threshold()
     test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
+    test_anchor_bias_clamped_after_many_steps_plugin()
+    test_anchor_bias_clamped_after_many_steps_module()
 
 
