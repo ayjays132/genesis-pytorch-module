@@ -3,17 +3,27 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SelfReplayBuffer:
-    """Dynamic replay buffer storing internal representations (hidden states) and
-    targets with optional priorities for importance sampling."""
+    """Dynamic replay buffer for hidden representations and targets.
 
-    def __init__(self, max_size=1000):
+    Parameters
+    ----------
+    max_size : int, optional
+        Maximum number of items to keep.
+    dtype : torch.dtype, optional
+        Data type used to store the hidden representations. ``float16`` reduces
+        memory footprint while having negligible impact on accuracy for
+        normalized activations.
+    """
+
+    def __init__(self, max_size=1000, dtype=torch.float16):
         self.max_size = max_size
+        self.dtype = dtype
         # list of tuples: (hidden_repr, target, priority)
         self.buffer = []
 
     def add(self, hidden, target, priority=1.0):
         """Store a hidden state and target with an associated priority."""
-        hidden_detached = hidden.detach().cpu()
+        hidden_detached = hidden.detach().to(self.dtype).cpu()
         target_detached = target.detach().cpu()
         self.buffer.append((hidden_detached, target_detached, float(priority)))
         if len(self.buffer) > self.max_size:
@@ -30,8 +40,10 @@ class SelfReplayBuffer:
         for idx in indices:
             h, t, _ = self.buffer[int(idx)]
             if device:
-                h = h.to(device)
+                h = h.to(device=device, dtype=torch.float32)
                 t = t.to(device)
+            else:
+                h = h.to(dtype=torch.float32)
             hiddens.append(h)
             targets.append(t)
         # Stack into tensors for batch processing
