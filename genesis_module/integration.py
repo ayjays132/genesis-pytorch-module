@@ -4,7 +4,7 @@ from . import GenesisPlugin
 
 
 def attach_genesis_plugin(base_model: nn.Module, plugin: GenesisPlugin, layer_name: str,
-                           output_attr: str = "genesis_logits"):
+                           output_attr: str = "genesis_logits", with_grad: bool = False):
     """Attach a GenesisPlugin to a given layer of a base model using a forward hook.
 
     Parameters
@@ -19,6 +19,10 @@ def attach_genesis_plugin(base_model: nn.Module, plugin: GenesisPlugin, layer_na
     output_attr : str, optional
         Attribute name on ``base_model`` where the plugin's logits will be stored
         after each forward pass. Defaults to ``"genesis_logits"``.
+    with_grad : bool, optional
+        If ``True``, execute the plugin with gradient tracking so that gradients
+        can propagate from any loss computed using ``output_attr`` back into the
+        hooked layer. Defaults to ``False`` which disables gradient tracking.
 
     Returns
     -------
@@ -32,8 +36,11 @@ def attach_genesis_plugin(base_model: nn.Module, plugin: GenesisPlugin, layer_na
     layer = modules[layer_name]
 
     def hook(module, inp, out):
-        with torch.no_grad():
+        if with_grad:
             logits, _, _ = plugin(out)
+        else:
+            with torch.no_grad():
+                logits, _, _ = plugin(out)
         setattr(base_model, output_attr, logits)
         return out
 

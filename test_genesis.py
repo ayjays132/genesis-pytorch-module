@@ -143,6 +143,31 @@ def test_attach_plugin():
     print("attach_genesis_plugin helper works correctly")
 
 
+def test_attach_plugin_with_grad():
+    """Gradients should propagate from plugin logits when with_grad=True."""
+    base = nn.Sequential(nn.Linear(4, 6))
+    plugin = GenesisPlugin(hidden_size=6, output_size=3, vocab_size=3)
+    handle = attach_genesis_plugin(base, plugin, layer_name="0", with_grad=True)
+
+    optimizer = torch.optim.SGD(list(base.parameters()) + list(plugin.parameters()), lr=0.01)
+    criterion = nn.CrossEntropyLoss()
+
+    x = torch.randn(2, 4)
+    y = torch.randint(0, 3, (2,))
+
+    optimizer.zero_grad()
+    _ = base(x)
+    loss = criterion(base.genesis_logits, y)
+    loss.backward()
+
+    assert base[0].weight.grad is not None, "Base model did not receive gradients"
+    assert plugin.decoder.weight.grad is not None, "Plugin parameters did not get gradients"
+
+    optimizer.step()
+    handle.remove()
+    print("attach_genesis_plugin with_grad works correctly")
+
+
 def test_replay_gradients_are_fresh():
     """Ensure replay updates do not reuse stale gradients."""
     input_dim = 10
@@ -191,5 +216,6 @@ if __name__ == "__main__":
     test_genesis_module()
     test_genesis_plugin()
     test_attach_plugin()
+    test_attach_plugin_with_grad()
 
 

@@ -239,7 +239,9 @@ GENESIS represents a novel approach to enhancing AGI learning by drawing inspira
 
 GENESIS can be added to any PyTorch model via the `GenesisPlugin` and the helper
 function `attach_genesis_plugin`. This function registers a forward hook on a
-chosen layer, routing that layer's hidden representation through the plugin.
+chosen layer, routing that layer's hidden representation through the plugin.  An
+optional `with_grad` argument controls whether gradients flow from any loss
+using the plugin's logits back into the hooked layer.
 
 ```python
 from genesis_module import GenesisPlugin, attach_genesis_plugin
@@ -254,7 +256,8 @@ base = nn.Sequential(
 
 # Attach plugin to the first linear layer
 plugin = GenesisPlugin(hidden_size=64, output_size=20, vocab_size=20)
-handle = attach_genesis_plugin(base, plugin, layer_name='0')
+# Enable gradient flow from plugin logits back to the hooked layer
+handle = attach_genesis_plugin(base, plugin, layer_name='0', with_grad=True)
 
 # After a forward pass, the plugin's logits are stored on the base model
 x = torch.randn(8, 32)
