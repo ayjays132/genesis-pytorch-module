@@ -212,10 +212,30 @@ def test_plugin_replay_gradients_are_fresh():
     assert optimizer.step_calls == 10
     assert optimizer.zero_calls == 10
 
+
+def test_update_priority_affects_sampling():
+    """Updating priorities should change sampling probabilities."""
+    buf = SelfReplayBuffer(max_size=3)
+    for i in range(3):
+        buf.add(torch.tensor([float(i)]), torch.tensor(i), priority=1.0)
+
+    torch.manual_seed(0)
+    h_before, _ = buf.sample(batch_size=50)
+    count_before = (h_before[:, 0] == 0.0).sum().item()
+
+    buf.update_priority(0, 10.0)
+
+    torch.manual_seed(0)
+    h_after, _ = buf.sample(batch_size=50)
+    count_after = (h_after[:, 0] == 0.0).sum().item()
+
+    assert count_after > count_before, "Priority update did not affect sampling"
+
 if __name__ == "__main__":
     test_genesis_module()
     test_genesis_plugin()
     test_attach_plugin()
     test_attach_plugin_with_grad()
+    test_update_priority_affects_sampling()
 
 

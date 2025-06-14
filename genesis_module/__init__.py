@@ -52,6 +52,35 @@ class SelfReplayBuffer:
         targets = torch.stack(targets, dim=0)
         return hiddens, targets
 
+    def update_priority(self, index, value):
+        """Update priority of stored item(s).
+
+        Parameters
+        ----------
+        index : int or sequence of ints
+            Index or indices of items in the buffer to update.
+        value : float or sequence of floats
+            New priority value(s). If ``value`` is a single float and ``index``
+            is a sequence, the same value is applied to all specified indices.
+        """
+        if isinstance(index, (list, tuple, torch.Tensor)):
+            if isinstance(value, (list, tuple, torch.Tensor)):
+                if len(index) != len(value):
+                    raise ValueError("index and value must have the same length")
+                pairs = zip(index, value)
+            else:
+                pairs = [(i, value) for i in index]
+            for idx, val in pairs:
+                idx = int(idx)
+                if 0 <= idx < len(self.buffer):
+                    h, t, _ = self.buffer[idx]
+                    self.buffer[idx] = (h, t, float(val))
+        else:
+            idx = int(index)
+            if 0 <= idx < len(self.buffer):
+                h, t, _ = self.buffer[idx]
+                self.buffer[idx] = (h, t, float(value))
+
 class EthicalGate:
     """Ethical gating layer to filter/adjust logits according to allowed tokens."""
     def __init__(self, vocab_size, disallowed_tokens=None):
