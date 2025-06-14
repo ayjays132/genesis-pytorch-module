@@ -163,194 +163,11 @@ class EthicalGate:
         logits = logits - self.classifier_scale * (1.0 - safety_scores.to(logits.device))
         return logits
 
-class IntegratedLearningModule(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
-                 bias_decay: float = 0.999, bias_max: float = 5.0,
-                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
-                 gate_classifier_scale: float = 5.0):
-        """
-        input_size: dimension of input features (e.g. embedding size)
-        hidden_size: dimension of hidden state in the core model
-        output_size: dimension of model output (e.g. number of classes or vocab tokens)
-        vocab_size: vocabulary size for ethical gating (if output is a distribution over vocab)
-        disallowed_tokens: list of token indices to block via ethical gate
-        gate_use_classifier: enable additional classifier-based filtering
-        gate_classifier_hidden: hidden dimension for classifier if used
-        gate_classifier_scale: scale factor for classifier penalty
-        """
-        super(IntegratedLearningModule, self).__init__()
-        # Core model: an LSTM encoder + linear decoder (for demonstration purposes)
-        self.hidden_size = hidden_size
-        self.encoder = nn.LSTM(input_size, hidden_size, batch_first=True)
-        self.decoder = nn.Linear(hidden_size, output_size)
-        # Replay buffer
-        self.replay_buffer = SelfReplayBuffer(max_size=500)
-        # Sticky amplifier persistence: anchor biases and importance matrix
-        # Anchor bias for hidden state (1D parameter of length hidden_size)
-        self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
-        self.bias_decay = bias_decay
-        self.bias_max = bias_max
-        # Persistent reference of anchor bias for consolidation
-        self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
-        # Importance scores for weights (for simplicity, one score per hidden unit for now)
-        # This can be extended to per-weight matrix; here we track importance per hidden unit
-        self.register_buffer("importance_scores", torch.zeros(hidden_size))
-        # Ethical gate
-        self.gate = None
-        if vocab_size:
-            self.gate = EthicalGate(
-                vocab_size,
-                disallowed_tokens,
-                use_classifier=gate_use_classifier,
-                classifier_hidden=gate_classifier_hidden,
-                classifier_scale=gate_classifier_scale,
-            )
-            self.gate.register_to_module(self)
-        # Novelty/abstraction metrics tracking
-        self.register_buffer("novelty_score", torch.tensor(0.0))
-        self.register_buffer("steps", torch.tensor(0))  # count training steps for scheduling
+class GenesisCore(nn.Module):
+    """Mixin providing replay, amplification, and gating utilities."""
 
-    def forward(self, x, hidden_in=None):
-        """
-        Forward pass.
-        x: input tensor of shape [batch, seq_len, input_size]
-        hidden_in: optional initial hidden state for LSTM (h0, c0)
-        Returns: logits (filtered if ethical gate is on) and raw logits before filter.
-        """
-        batch_size = x.size(0)
-        # LSTM encoding
-        out, (h_n, c_n) = self.encoder(x, hidden_in)  # out: [batch, seq_len, hidden_size]
-        # Take final hidden state of last time step for each sequence
-        # (assuming we want one output per sequence, e.g., next-token prediction or classification)
-        final_hidden = out[:, -1, :]  # shape [batch, hidden_size]
-        # Apply sticky anchor bias to hidden state (amplifier persistence influence)
-        final_hidden = final_hidden + self.anchor_bias  # broadcast add bias to each batch element
-        # Decode to output logits
-        logits = self.decoder(final_hidden)  # shape [batch, output_size]
-        raw_logits = logits.clone()
-        # Ethical gating: filter logits if gate is defined (assuming output are vocab probabilities)
-        if self.gate:
-            if getattr(self.gate, "use_classifier", False):
-                logits = self.gate.filter_logits_with_classifier(logits, module=self)
-            else:
-                logits = self.gate.filter_logits(logits, module=self)
-        return logits, raw_logits, final_hidden
-
-    def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
-        """Dynamically adjust learning rate based on novelty_score."""
-        novelty_val = float(self.novelty_score)
-        progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
-        lr = base_lr + (max_lr - base_lr) * progress
-        lr = max(min_lr, min(max_lr, lr))
-        for group in optimizer.param_groups:
-            group["lr"] = lr
-        return lr
-
-    def training_step(self, x, target, optimizer, criterion):
-        """
-        Perform one training step: forward pass, loss computation, backward pass with amplifier, 
-        persistence update, and optional replay.
-        """
-        self.train()
-        optimizer.zero_grad()
-        with torch.no_grad():
-            self.anchor_bias.mul_(self.bias_decay)
-            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
-        # Forward pass
-        logits, raw_logits, final_hidden = self.forward(x)
-        # Retain gradient on final_hidden so the amplifier can inspect it
-        final_hidden.retain_grad()
-        # Calculate main task loss
-        loss_main = criterion(logits, target)
-        # Compute novelty metric (e.g. current batch average loss as proxy for novelty)
-        novelty = loss_main.detach()
-        # Update novelty_score EMA (Exponential Moving Average)
-        self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
-        # Adjust learning rate according to novelty
-        self.update_learning_rate(optimizer)
-        # Backpropagate loss
-        loss_main.backward(retain_graph=True)
-        grad_hidden = final_hidden.grad
-        amplifier_triggered = False
-        # Sticky Learning Amplifier: detect high-gradient hidden units and amplify
-        if grad_hidden is not None:
-            # Compute gradient norm per hidden unit (across batch)
-            grad_norm = grad_hidden.abs().mean(dim=0)  # mean absolute grad for each hidden unit
-            # Determine which hidden units to amplify (gradient above threshold)
-            threshold = grad_norm.mean() + 2 * grad_norm.std()  # e.g., 2 std above mean as threshold
-            high_grad_mask = (grad_norm > threshold).float()  # 1 for important units
-            if high_grad_mask.sum().item() > 0:
-                amplifier_triggered = True
-                # Amplify: increase anchor_bias for salient units
-                avg_hidden = final_hidden.detach().mean(dim=0)
-                amp_rate = 0.1
-                self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
-                self.importance_scores += high_grad_mask
-                # (We could also amplify gradient itself here or adjust learning rates dynamically if needed)
-        # Consolidation regularization to preserve important anchor_bias values
-        if self.importance_scores.sum() > 0:
-            reg_loss = torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
-            reg_loss = 0.1 * reg_loss
-            reg_loss.backward(retain_graph=True)
-        # Add experience to replay buffer (pick a random sample from batch to store to limit size)
-        idx = torch.randint(0, x.size(0), (1,)).item()
-        priority = float(loss_main.detach())
-        self.replay_buffer.add(final_hidden[idx], target[idx], priority=priority)
-        self.steps += 1
-        # Optionally perform a replay update periodically (e.g. every few steps)
-        loss_replay = torch.tensor(0.0)
-        if self.steps % 10 == 0:
-            replay_h, replay_t = self.replay_buffer.sample(batch_size=1, device=x.device)
-            if replay_h is not None:
-                # Forward pass on replay hidden through decoder
-                replay_logits = self.decoder(replay_h + self.anchor_bias)  # include anchor bias here as well
-                # No gating on replay loss to ensure we reinforce raw mapping
-                loss_replay = criterion(replay_logits, replay_t)
-                # Accumulate replay gradients with main gradients
-                loss_replay.backward()
-        # Clip gradients to maintain stable GradNorm (if any grad is too large)
-        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
-        optimizer.step()
-        with torch.no_grad():
-            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
-        if amplifier_triggered:
-            self.anchor_bias_ref = self.anchor_bias.detach().clone()
-        # Total loss for reporting (main + any replay if applied)
-        total_loss = loss_main.item() + loss_replay.item()
-        return total_loss
-
-    # (Optional) A method to apply consolidation regularization if we maintained reference weights
-    def apply_consolidation(self, lambda_reg=0.1):
-        """Apply consolidation penalty to anchor_bias based on importance scores."""
-        if self.importance_scores.sum() == 0:
-            return torch.tensor(0.0, device=self.anchor_bias.device)
-        penalty = lambda_reg * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
-        return penalty
-
-
-
-
-class GenesisPlugin(nn.Module):
-    """Attachable module providing GENESIS functionality for any base model.
-
-    Parameters
-    ----------
-    hidden_size : int
-        Dimension of the hidden representation passed from the base model.
-    output_size : int
-        Dimension of the output logits produced by this plugin.
-    vocab_size : int, optional
-        Vocabulary size for ethical gating. If provided, logits will be filtered
-        to suppress disallowed tokens.
-    disallowed_tokens : list of int, optional
-        Token indices that should be suppressed by the ethical gate.
-    replay_size : int, optional
-        Maximum number of items in the replay buffer.
-    """
-
-    def __init__(self, hidden_size, output_size, vocab_size=None,
-                 disallowed_tokens=None, replay_size=500,
-                 bias_decay: float = 0.999, bias_max: float = 5.0,
+    def __init__(self, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
+                 replay_size=500, bias_decay: float = 0.999, bias_max: float = 5.0,
                  gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
                  gate_classifier_scale: float = 5.0):
         super().__init__()
@@ -375,8 +192,7 @@ class GenesisPlugin(nn.Module):
         self.register_buffer("novelty_score", torch.tensor(0.0))
         self.register_buffer("steps", torch.tensor(0))
 
-    def forward(self, hidden):
-        """Apply GENESIS biasing and compute logits."""
+    def core_forward(self, hidden):
         final_hidden = hidden + self.anchor_bias
         logits = self.decoder(final_hidden)
         raw_logits = logits.clone()
@@ -388,7 +204,6 @@ class GenesisPlugin(nn.Module):
         return logits, raw_logits, final_hidden
 
     def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
-        """Adjust optimizer learning rate using the current novelty_score."""
         novelty_val = float(self.novelty_score)
         progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
         lr = base_lr + (max_lr - base_lr) * progress
@@ -397,15 +212,7 @@ class GenesisPlugin(nn.Module):
             group["lr"] = lr
         return lr
 
-    def training_step(self, hidden, target, optimizer, criterion):
-        """Perform a training step using provided hidden states."""
-        self.train()
-        optimizer.zero_grad()
-        with torch.no_grad():
-            self.anchor_bias.mul_(self.bias_decay)
-            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
-        logits, raw_logits, final_hidden = self.forward(hidden)
-        # Retain gradient on final_hidden so the amplifier can access it
+    def _shared_training_logic(self, final_hidden, logits, target, optimizer, criterion):
         final_hidden.retain_grad()
         loss_main = criterion(logits, target)
         novelty = loss_main.detach()
@@ -427,17 +234,16 @@ class GenesisPlugin(nn.Module):
         if self.importance_scores.sum() > 0:
             reg_loss = 0.1 * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
             reg_loss.backward(retain_graph=True)
-        idx = torch.randint(0, hidden.size(0), (1,)).item()
+        idx = torch.randint(0, final_hidden.size(0), (1,)).item()
         priority = float(loss_main.detach())
         self.replay_buffer.add(final_hidden[idx], target[idx], priority=priority)
         self.steps += 1
         loss_replay = torch.tensor(0.0)
         if self.steps % 10 == 0:
-            replay_h, replay_t = self.replay_buffer.sample(batch_size=1, device=hidden.device)
+            replay_h, replay_t = self.replay_buffer.sample(batch_size=1, device=final_hidden.device)
             if replay_h is not None:
                 replay_logits = self.decoder(replay_h + self.anchor_bias)
                 loss_replay = criterion(replay_logits, replay_t)
-                # Accumulate replay gradients with main gradients
                 loss_replay.backward()
         torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
         optimizer.step()
@@ -449,12 +255,110 @@ class GenesisPlugin(nn.Module):
         return total_loss
 
     def apply_consolidation(self, lambda_reg=0.1):
-        """Return consolidation penalty based on importance scores."""
         if self.importance_scores.sum() == 0:
             return torch.tensor(0.0, device=self.anchor_bias.device)
         penalty = lambda_reg * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
         return penalty
+class IntegratedLearningModule(GenesisCore):
+    def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
+                 bias_decay: float = 0.999, bias_max: float = 5.0,
+                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
+                 gate_classifier_scale: float = 5.0):
+        """
+        input_size: dimension of input features (e.g. embedding size)
+        hidden_size: dimension of hidden state in the core model
+        output_size: dimension of model output (e.g. number of classes or vocab tokens)
+        vocab_size: vocabulary size for ethical gating (if output is a distribution over vocab)
+        disallowed_tokens: list of token indices to block via ethical gate
+        gate_use_classifier: enable additional classifier-based filtering
+        gate_classifier_hidden: hidden dimension for classifier if used
+        gate_classifier_scale: scale factor for classifier penalty
+        """
+        super().__init__(
+            hidden_size, output_size,
+            vocab_size=vocab_size,
+            disallowed_tokens=disallowed_tokens,
+            bias_decay=bias_decay,
+            bias_max=bias_max,
+            gate_use_classifier=gate_use_classifier,
+            gate_classifier_hidden=gate_classifier_hidden,
+            gate_classifier_scale=gate_classifier_scale,
+        )
+        self.encoder = nn.LSTM(input_size, hidden_size, batch_first=True)
+
+    def forward(self, x, hidden_in=None):
+        """Forward pass returning logits and hidden states."""
+        out, _ = self.encoder(x, hidden_in)
+        final_hidden = out[:, -1, :]
+        return self.core_forward(final_hidden)
+
+    def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
+        """Dynamically adjust learning rate based on novelty_score."""
+        novelty_val = float(self.novelty_score)
+        progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
+        lr = base_lr + (max_lr - base_lr) * progress
+        lr = max(min_lr, min(max_lr, lr))
+        for group in optimizer.param_groups:
+            group["lr"] = lr
+        return lr
+
+    def training_step(self, x, target, optimizer, criterion):
+        self.train()
+        optimizer.zero_grad()
+        with torch.no_grad():
+            self.anchor_bias.mul_(self.bias_decay)
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
+        logits, raw_logits, final_hidden = self.forward(x)
+        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion)
 
 
+
+
+
+class GenesisPlugin(GenesisCore):
+    """Attachable module providing GENESIS functionality for any base model.
+
+    Parameters
+    ----------
+    hidden_size : int
+        Dimension of the hidden representation passed from the base model.
+    output_size : int
+        Dimension of the output logits produced by this plugin.
+    vocab_size : int, optional
+        Vocabulary size for ethical gating. If provided, logits will be filtered
+        to suppress disallowed tokens.
+    disallowed_tokens : list of int, optional
+        Token indices that should be suppressed by the ethical gate.
+    replay_size : int, optional
+        Maximum number of items in the replay buffer.
+    """
+
+    def __init__(self, hidden_size, output_size, vocab_size=None,
+                 disallowed_tokens=None, replay_size=500,
+                 bias_decay: float = 0.999, bias_max: float = 5.0,
+                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
+                 gate_classifier_scale: float = 5.0):
+        super().__init__(
+            hidden_size, output_size,
+            vocab_size=vocab_size,
+            disallowed_tokens=disallowed_tokens,
+            replay_size=replay_size,
+            bias_decay=bias_decay,
+            bias_max=bias_max,
+            gate_use_classifier=gate_use_classifier,
+            gate_classifier_hidden=gate_classifier_hidden,
+            gate_classifier_scale=gate_classifier_scale,
+        )
+    def forward(self, hidden):
+        return self.core_forward(hidden)
+
+    def training_step(self, hidden, target, optimizer, criterion):
+        self.train()
+        optimizer.zero_grad()
+        with torch.no_grad():
+            self.anchor_bias.mul_(self.bias_decay)
+            torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
+        logits, raw_logits, final_hidden = self.forward(hidden)
+        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion)
 from .integration import attach_genesis_plugin
 
