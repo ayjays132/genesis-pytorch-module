@@ -82,8 +82,26 @@ class SelfReplayBuffer:
                 self.buffer[idx] = (h, t, float(value))
 
 class EthicalGate:
-    """Ethical gating layer to filter/adjust logits according to allowed tokens."""
-    def __init__(self, vocab_size, disallowed_tokens=None):
+    """Ethical gating layer to filter/adjust logits according to allowed tokens.
+
+    Parameters
+    ----------
+    vocab_size : int
+        Size of the output vocabulary.
+    disallowed_tokens : list[int], optional
+        Tokens that should always be masked out.
+    use_classifier : bool, optional
+        If ``True`` an internal MLP classifier scores tokens for safety and can
+        further reduce unsafe token probabilities.
+    classifier_hidden : int, optional
+        Hidden dimension of the MLP classifier.
+    classifier_scale : float, optional
+        Multiplicative scale applied to the classifier score when reducing
+        logits.
+    """
+
+    def __init__(self, vocab_size, disallowed_tokens=None, *, use_classifier=False,
+                 classifier_hidden=32, classifier_scale=5.0):
         self.vocab_size = vocab_size
         # Create a mask tensor for logits: 0 for disallowed tokens, 1 for allowed ones
         mask = torch.ones(vocab_size, dtype=torch.float32)
@@ -96,10 +114,21 @@ class EthicalGate:
         # Here we'll just store it for later use in forward.
         self.registered = False
         self.mask = mask
+        self.use_classifier = use_classifier
+        self.classifier_scale = classifier_scale
+        if use_classifier:
+            self.classifier = nn.Sequential(
+                nn.Linear(vocab_size, classifier_hidden),
+                nn.ReLU(),
+                nn.Linear(classifier_hidden, vocab_size),
+                nn.Sigmoid(),
+            )
 
     def register_to_module(self, module):
         """Register mask as buffer to a given module (so it moves to CUDA with module)."""
         module.register_buffer("ethical_mask", self.mask)
+        if self.use_classifier:
+            module.add_module("ethical_classifier", self.classifier)
         self.registered = True
 
     def filter_logits(self, logits, module):
@@ -125,15 +154,29 @@ class EthicalGate:
         filtered_logits = logits + (mask_vec.to(logits.device) * 0.0 + (1 - mask_vec.to(logits.device)) * neg_inf)
         return filtered_logits
 
+    def filter_logits_with_classifier(self, logits, module):
+        """Filter logits using the static mask and optional classifier."""
+        logits = self.filter_logits(logits, module)
+        if not self.use_classifier:
+            return logits
+        safety_scores = self.classifier(logits.detach())  # [batch, vocab]
+        logits = logits - self.classifier_scale * (1.0 - safety_scores.to(logits.device))
+        return logits
+
 class IntegratedLearningModule(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
-                 bias_decay: float = 0.999, bias_max: float = 5.0):
+                 bias_decay: float = 0.999, bias_max: float = 5.0,
+                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
+                 gate_classifier_scale: float = 5.0):
         """
         input_size: dimension of input features (e.g. embedding size)
         hidden_size: dimension of hidden state in the core model
         output_size: dimension of model output (e.g. number of classes or vocab tokens)
         vocab_size: vocabulary size for ethical gating (if output is a distribution over vocab)
         disallowed_tokens: list of token indices to block via ethical gate
+        gate_use_classifier: enable additional classifier-based filtering
+        gate_classifier_hidden: hidden dimension for classifier if used
+        gate_classifier_scale: scale factor for classifier penalty
         """
         super(IntegratedLearningModule, self).__init__()
         # Core model: an LSTM encoder + linear decoder (for demonstration purposes)
@@ -155,10 +198,14 @@ class IntegratedLearningModule(nn.Module):
         # Ethical gate
         self.gate = None
         if vocab_size:
-            self.gate = EthicalGate(vocab_size, disallowed_tokens)
-            # Register the ethical mask as buffer to this module so it moves with .to(device)
-            self.register_buffer("ethical_mask", self.gate.mask)
-            self.gate.registered = True  # mark that mask is registered
+            self.gate = EthicalGate(
+                vocab_size,
+                disallowed_tokens,
+                use_classifier=gate_use_classifier,
+                classifier_hidden=gate_classifier_hidden,
+                classifier_scale=gate_classifier_scale,
+            )
+            self.gate.register_to_module(self)
         # Novelty/abstraction metrics tracking
         self.register_buffer("novelty_score", torch.tensor(0.0))
         self.register_buffer("steps", torch.tensor(0))  # count training steps for scheduling
@@ -183,7 +230,10 @@ class IntegratedLearningModule(nn.Module):
         raw_logits = logits.clone()
         # Ethical gating: filter logits if gate is defined (assuming output are vocab probabilities)
         if self.gate:
-            logits = self.gate.filter_logits(logits, module=self)  # uses the registered mask buffer
+            if getattr(self.gate, "use_classifier", False):
+                logits = self.gate.filter_logits_with_classifier(logits, module=self)
+            else:
+                logits = self.gate.filter_logits(logits, module=self)
         return logits, raw_logits, final_hidden
 
     def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
@@ -300,7 +350,9 @@ class GenesisPlugin(nn.Module):
 
     def __init__(self, hidden_size, output_size, vocab_size=None,
                  disallowed_tokens=None, replay_size=500,
-                 bias_decay: float = 0.999, bias_max: float = 5.0):
+                 bias_decay: float = 0.999, bias_max: float = 5.0,
+                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
+                 gate_classifier_scale: float = 5.0):
         super().__init__()
         self.hidden_size = hidden_size
         self.decoder = nn.Linear(hidden_size, output_size)
@@ -312,9 +364,14 @@ class GenesisPlugin(nn.Module):
         self.register_buffer("importance_scores", torch.zeros(hidden_size))
         self.gate = None
         if vocab_size:
-            self.gate = EthicalGate(vocab_size, disallowed_tokens)
-            self.register_buffer("ethical_mask", self.gate.mask)
-            self.gate.registered = True
+            self.gate = EthicalGate(
+                vocab_size,
+                disallowed_tokens,
+                use_classifier=gate_use_classifier,
+                classifier_hidden=gate_classifier_hidden,
+                classifier_scale=gate_classifier_scale,
+            )
+            self.gate.register_to_module(self)
         self.register_buffer("novelty_score", torch.tensor(0.0))
         self.register_buffer("steps", torch.tensor(0))
 
@@ -324,7 +381,10 @@ class GenesisPlugin(nn.Module):
         logits = self.decoder(final_hidden)
         raw_logits = logits.clone()
         if self.gate:
-            logits = self.gate.filter_logits(logits, module=self)
+            if getattr(self.gate, "use_classifier", False):
+                logits = self.gate.filter_logits_with_classifier(logits, module=self)
+            else:
+                logits = self.gate.filter_logits(logits, module=self)
         return logits, raw_logits, final_hidden
 
     def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):

@@ -158,25 +158,26 @@ The provided `genesis_module.py` implements the core components of GENESIS. Belo
 
 ### `EthicalGate` Class
 
-*   **`__init__(self, vocab_size, disallowed_tokens=None)`:** Creates a mask tensor (`self.mask`) of size `vocab_size`. Disallowed token indices are marked with `0.0`, while allowed tokens are `1.0`. This mask is designed to be registered as a buffer to the main `nn.Module` to ensure it moves with the model to the correct device (e.g., GPU).
-*   **`register_to_module(self, module)`:** A helper method to register the `ethical_mask` as a buffer to the parent `nn.Module`. This is important for device management in PyTorch.
-*   **`filter_logits(self, logits, module)`:** Applies the ethical mask to the raw logits. For disallowed tokens (where `mask_vec` is `0`), a large negative value (`-1e9`) is added to the logits. This effectively makes their probability zero after softmax, preventing their selection. The mask is retrieved from the `module.ethical_mask` buffer, ensuring it's on the correct device.
+*   **`__init__(self, vocab_size, disallowed_tokens=None, use_classifier=False)`:** Creates a mask tensor (`self.mask`) of size `vocab_size`. Disallowed token indices are marked with `0.0`, while allowed tokens are `1.0`. When `use_classifier=True`, a small MLP classifier is initialized to score token logits for safety.
+*   **`register_to_module(self, module)`:** Registers the `ethical_mask` buffer and, if a classifier is present, attaches it to the parent module so its parameters move with the model.
+*   **`filter_logits(self, logits, module)`:** Applies the static ethical mask, adding `-1e9` to disallowed token logits.
+*   **`filter_logits_with_classifier(self, logits, module)`:** First applies the static mask, then uses the classifier's safety scores to subtract an additional penalty from unsafe tokens, further lowering their probability.
 
 ### `IntegratedLearningModule` Class
 
 This is the main module that integrates all GENESIS components. For demonstration, it uses a simple LSTM encoder and a linear decoder, but these can be replaced with more complex architectures (e.g., Transformers).
 
-*   **`__init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None)`:**
+*   **`__init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None, gate_use_classifier=False)`:**
     *   Initializes the core model (`encoder`, `decoder`).
     *   Instantiates `SelfReplayBuffer`.
     *   Initializes `self.anchor_bias` as a `nn.Parameter` (trainable) and `self.importance_scores` as a `torch.Tensor` registered as a buffer (non-trainable, but moves with device). These are key for the Sticky Learning Amplifier and Persistence Layer.
-    *   Initializes `EthicalGate` if `vocab_size` is provided and registers its mask as a buffer.
+    *   Initializes `EthicalGate` if `vocab_size` is provided and registers its mask (and optional classifier) as a buffer.
     *   Initializes `novelty_score` and `steps` as buffers for tracking metrics and scheduling.
 
 *   **`forward(self, x, hidden_in=None)`:**
     *   Performs a standard forward pass through the `encoder` (LSTM) and `decoder` (Linear layer).
     *   Applies the `self.anchor_bias` to the `final_hidden` state, demonstrating the persistence influence.
-    *   Calls `self.gate.filter_logits` if an ethical gate is active, ensuring outputs are ethically compliant.
+    *   Calls `self.gate.filter_logits_with_classifier` if classifier filtering is enabled, otherwise `filter_logits`, ensuring outputs are ethically compliant.
     *   Returns filtered logits, raw logits (for internal use/debugging), and the `final_hidden` state.
 
 *   **`training_step(self, x, target, optimizer, criterion)`:** This method encapsulates a single training iteration, demonstrating the interplay of GENESIS components.

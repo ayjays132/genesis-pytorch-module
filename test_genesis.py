@@ -323,6 +323,34 @@ def test_update_priority_affects_sampling():
     assert count_after > count_before, "Priority update did not affect sampling"
 
 
+def test_classifier_based_filtering():
+    """EthicalGate with classifier should further reduce unsafe logits."""
+    vocab = 5
+    disallowed = [0]
+    plugin = GenesisPlugin(
+        hidden_size=4,
+        output_size=vocab,
+        vocab_size=vocab,
+        disallowed_tokens=disallowed,
+        gate_use_classifier=True,
+        gate_classifier_scale=2.0,
+    )
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    plugin = plugin.to(device)
+
+    # Manually set classifier to strongly penalize token 2
+    with torch.no_grad():
+        for p in plugin.ethical_classifier.parameters():
+            p.zero_()
+        plugin.ethical_classifier[2].bias[:] = torch.tensor([5.0, 5.0, -5.0, 5.0, 5.0], device=device)
+
+    logits = torch.zeros(1, vocab, device=device)
+    filtered = plugin.gate.filter_logits_with_classifier(logits.clone(), plugin)
+
+    assert filtered[0, 0] < -1e8  # mask still applied
+    assert filtered[0, 2] < logits[0, 2] - 1.0  # penalized by classifier
+
+
 def test_anchor_bias_clamped_after_many_steps_plugin():
     """Anchor bias should remain within [-bias_max, bias_max] after repeated training."""
     hidden_dim = 6
@@ -370,6 +398,7 @@ if __name__ == "__main__":
     test_anchor_bias_ref_update_threshold()
     test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
+    test_classifier_based_filtering()
     test_anchor_bias_clamped_after_many_steps_plugin()
     test_anchor_bias_clamped_after_many_steps_module()
 
