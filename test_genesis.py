@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from genesis_module import IntegratedLearningModule, SelfReplayBuffer, EthicalGate
+from genesis_module import IntegratedLearningModule, SelfReplayBuffer, EthicalGate, GenesisPlugin
 
 def test_genesis_module():
     print("Starting GENESIS module test...")
@@ -70,7 +70,34 @@ def test_genesis_module():
 
     print("\nAll GENESIS module tests passed successfully!")
 
+def test_genesis_plugin():
+    print("\nTesting GenesisPlugin integration")
+    input_dim = 32
+    hidden_dim = 64
+    output_dim = 50
+    disallowed = [0, 1]
+
+    base = nn.Linear(input_dim, hidden_dim)
+    plugin = GenesisPlugin(hidden_dim, output_dim, vocab_size=output_dim, disallowed_tokens=disallowed)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    base = base.to(device)
+    plugin = plugin.to(device)
+
+    optimizer = torch.optim.Adam(list(base.parameters()) + list(plugin.parameters()), lr=0.001)
+    criterion = nn.CrossEntropyLoss()
+
+    x = torch.randn(4, input_dim).to(device)
+    hidden = torch.relu(base(x))
+    logits, _, _ = plugin(hidden)
+    assert logits.shape == torch.Size([4, output_dim])
+
+    y = torch.randint(0, output_dim, (4,)).to(device)
+    loss_val = plugin.training_step(hidden, y, optimizer, criterion)
+    assert len(plugin.replay_buffer.buffer) > 0
+    print(f"GenesisPlugin training step loss: {loss_val:.4f}")
+
 if __name__ == "__main__":
     test_genesis_module()
+    test_genesis_plugin()
 
 
