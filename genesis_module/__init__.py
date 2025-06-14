@@ -62,24 +62,31 @@ class SelfReplayBuffer:
         value : float or sequence of floats
             New priority value(s). If ``value`` is a single float and ``index``
             is a sequence, the same value is applied to all specified indices.
+
+        Raises
+        ------
+        IndexError
+            If any provided index is outside ``[0, len(buffer))``.
         """
         if isinstance(index, (list, tuple, torch.Tensor)):
+            indices = [int(i) for i in index]
+            if any(i < 0 or i >= len(self.buffer) for i in indices):
+                raise IndexError("index out of range")
             if isinstance(value, (list, tuple, torch.Tensor)):
-                if len(index) != len(value):
+                if len(indices) != len(value):
                     raise ValueError("index and value must have the same length")
-                pairs = zip(index, value)
+                values = [float(v) for v in value]
             else:
-                pairs = [(i, value) for i in index]
-            for idx, val in pairs:
-                idx = int(idx)
-                if 0 <= idx < len(self.buffer):
-                    h, t, _ = self.buffer[idx]
-                    self.buffer[idx] = (h, t, float(val))
+                values = [float(value)] * len(indices)
+            for idx, val in zip(indices, values):
+                h, t, _ = self.buffer[idx]
+                self.buffer[idx] = (h, t, val)
         else:
             idx = int(index)
-            if 0 <= idx < len(self.buffer):
-                h, t, _ = self.buffer[idx]
-                self.buffer[idx] = (h, t, float(value))
+            if idx < 0 or idx >= len(self.buffer):
+                raise IndexError("index out of range")
+            h, t, _ = self.buffer[idx]
+            self.buffer[idx] = (h, t, float(value))
 
 class EthicalGate:
     """Ethical gating layer to filter/adjust logits according to allowed tokens.

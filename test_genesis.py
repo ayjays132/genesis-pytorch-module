@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import pytest
 from genesis_module import (
     IntegratedLearningModule,
     SelfReplayBuffer,
@@ -323,6 +324,20 @@ def test_update_priority_affects_sampling():
     assert count_after > count_before, "Priority update did not affect sampling"
 
 
+def test_update_priority_invalid_indices():
+    """update_priority should raise IndexError for out-of-range indices."""
+    buf = SelfReplayBuffer(max_size=2)
+    for i in range(2):
+        buf.add(torch.tensor([float(i)]), torch.tensor(i), priority=1.0)
+
+    with pytest.raises(IndexError):
+        buf.update_priority(5, 1.0)
+    with pytest.raises(IndexError):
+        buf.update_priority(-1, 1.0)
+    with pytest.raises(IndexError):
+        buf.update_priority([0, 2], [1.0, 2.0])
+
+
 def test_classifier_based_filtering():
     """EthicalGate with classifier should further reduce unsafe logits."""
     vocab = 5
@@ -398,6 +413,7 @@ if __name__ == "__main__":
     test_anchor_bias_ref_update_threshold()
     test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
+    test_update_priority_invalid_indices()
     test_classifier_based_filtering()
     test_anchor_bias_clamped_after_many_steps_plugin()
     test_anchor_bias_clamped_after_many_steps_module()
