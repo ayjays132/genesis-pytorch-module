@@ -7,6 +7,9 @@ setup(
     install_requires=[
         'torch>=1.9.0',
     ],
+    extras_require={
+        'tests': ['pytest'],
+    },
     author='Manus AI',
     description='A PyTorch module for human-like learning with self-replay, ethical gating, and memory efficiency.',
     long_description=open('README.md').read(),
