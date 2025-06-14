@@ -283,3 +283,21 @@ python -m build
 This command generates `build/`, `dist/`, and `genesis_module.egg-info/`
 directories. These artifacts are ignored via `.gitignore` and should not be
 committed to the repository.
+
+## Contributing
+
+To run tests and build the package locally, install the development
+dependencies:
+
+```bash
+pip install -r requirements-dev.txt
+```
+
+For running the test suite with the package extras:
+
+```bash
+pip install -e .[tests]
+python test_genesis.py
+```
+
+`requirements-dev.txt` lists `torch`, `pytest`, and `build` for convenience.
