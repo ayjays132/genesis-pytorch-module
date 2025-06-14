@@ -3,32 +3,32 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 class SelfReplayBuffer:
-    """Dynamic replay buffer storing internal representations (hidden states) and targets."""
+    """Dynamic replay buffer storing internal representations (hidden states) and
+    targets with optional priorities for importance sampling."""
+
     def __init__(self, max_size=1000):
         self.max_size = max_size
-        self.buffer = []  # list of (hidden_repr, target) tuples
+        # list of tuples: (hidden_repr, target, priority)
+        self.buffer = []
 
-    def add(self, hidden, target):
-        # Detach hidden state from computation graph and optionally move to CPU for storage
+    def add(self, hidden, target, priority=1.0):
+        """Store a hidden state and target with an associated priority."""
         hidden_detached = hidden.detach().cpu()
         target_detached = target.detach().cpu()
-        # Add to buffer
-        self.buffer.append((hidden_detached, target_detached))
+        self.buffer.append((hidden_detached, target_detached, float(priority)))
         if len(self.buffer) > self.max_size:
-            # Remove oldest entry to keep memory bounded
             self.buffer.pop(0)
 
     def sample(self, batch_size=1, device=None):
         """Sample a batch of stored (hidden, target) pairs."""
         if len(self.buffer) == 0:
             return None, None
-        # Random sample with replacement or without depending on use-case
-        indices = torch.randperm(len(self.buffer))[:batch_size]
-        hiddens = []
-        targets = []
+        priorities = torch.tensor([p for (_, _, p) in self.buffer], dtype=torch.float)
+        probs = priorities / priorities.sum()
+        indices = torch.multinomial(probs, batch_size, replacement=True)
+        hiddens, targets = [], []
         for idx in indices:
-            h, t = self.buffer[idx]
-            # Move to target device if specified
+            h, t, _ = self.buffer[int(idx)]
             if device:
                 h = h.to(device)
                 t = t.to(device)
@@ -201,8 +201,8 @@ class IntegratedLearningModule(nn.Module):
         # (Not fully shown; would add loss term for (param - param_ref)^2 * importance_scores)
         # Add experience to replay buffer (pick a random sample from batch to store to limit size)
         idx = torch.randint(0, x.size(0), (1,)).item()
-        # Store the final hidden state (with no grad) and corresponding target
-        self.replay_buffer.add(final_hidden[idx], target[idx])
+        priority = float(loss_main.detach())
+        self.replay_buffer.add(final_hidden[idx], target[idx], priority=priority)
         self.steps += 1
         # Optionally perform a replay update periodically (e.g. every few steps)
         loss_replay = torch.tensor(0.0)
@@ -312,7 +312,8 @@ class GenesisPlugin(nn.Module):
         optimizer.step()
         self.anchor_bias_ref = self.anchor_bias.detach().clone()
         idx = torch.randint(0, hidden.size(0), (1,)).item()
-        self.replay_buffer.add(final_hidden[idx], target[idx])
+        priority = float(loss_main.detach())
+        self.replay_buffer.add(final_hidden[idx], target[idx], priority=priority)
         self.steps += 1
         loss_replay = torch.tensor(0.0)
         if self.steps % 10 == 0:
