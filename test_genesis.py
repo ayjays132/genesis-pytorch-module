@@ -78,6 +78,9 @@ def test_genesis_module():
     assert h_replay is not None and t_replay is not None, "Failed to sample from replay buffer."
     assert h_replay.shape == torch.Size([1, hidden_dim]), f"Expected replay hidden shape [1, {hidden_dim}], got {h_replay.shape}"
     assert t_replay.shape == torch.Size([1]), f"Expected replay target shape [1], got {t_replay.shape}"
+    # Ensure memory-efficient dtype storage and automatic float32 conversion
+    assert model.replay_buffer.buffer[0][0].dtype == torch.float16, "Replay buffer should store float16 by default"
+    assert h_replay.dtype == torch.float32, "Sampled hidden state should be float32"
     print("Replay buffer sampling successful.")
 
     print("\nAll GENESIS module tests passed successfully!")

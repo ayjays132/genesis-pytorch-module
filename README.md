@@ -17,6 +17,12 @@ Infants learn through repetition and progressive abstraction. They babble, then 
 
 The self-replay buffer, denoted as \$B\$, is implemented as a limited-size memory (e.g., a deque). It stores tuples of the form \$(h, y, p)\$, where \$h\$ is a salient internal representation (e.g., a final hidden-state vector encoding a recent context window), \$y\$ is the associated target, and \$p\$ is a priority score used for importance sampling. Each training iteration, the model's forward pass produces a hidden representation \$h_t\$ for the current input and a predicted output \$\hat{y}_t\$. We identify "meaningful" contexts to store—such as those with high training loss or rich semantic content—and assign them higher priorities. The hidden state \$h_t\$ is *detached* (to prevent backpropagation through time into the buffer) and saved along with its ground truth \$y_t\$ and priority into \$B\$. If \$B\$ is full, older entries are dropped, typically in a FIFO manner or based on lowest priority.
 
+To maximize memory efficiency, hidden states can optionally be stored in 16-bit
+floating point format (``float16``). Because these representations are
+generally normalized, this reduction in precision has minimal impact on replay
+accuracy while roughly halving the buffer's memory footprint. This allows
+GENESIS to maintain a substantial replay history even on limited hardware.
+
 ### Replay Usage and Mathematical Rationale
 
 During training, the model periodically rehearses from \$B\$. This involves intermingling normal training batches with small **replay batches** drawn from \$B\$. For a sampled pair \$(h, y) \sim B\$, the internal representation \$h\$ is fed into the later layers of the model to predict an output \$\tilde{y}\$. A replay loss \$L_{\mathit{replay}} = \mathcal{L}(\tilde{y}, y)\$ (e.g., cross-entropy with the originally correct label) is computed. This loss drives the model to **retain fidelity** to earlier learned mappings. Essentially, the model is trained to ensure that whenever a similar hidden state \$h\$ re-occurs, it continues to produce the correct/expected output \$y\$.
