@@ -215,3 +215,82 @@ class IntegratedLearningModule(nn.Module):
         pass
 
 
+
+
+class GenesisPlugin(nn.Module):
+    """Attachable module providing GENESIS functionality for any base model.
+
+    Parameters
+    ----------
+    hidden_size : int
+        Dimension of the hidden representation passed from the base model.
+    output_size : int
+        Dimension of the output logits produced by this plugin.
+    vocab_size : int, optional
+        Vocabulary size for ethical gating. If provided, logits will be filtered
+        to suppress disallowed tokens.
+    disallowed_tokens : list of int, optional
+        Token indices that should be suppressed by the ethical gate.
+    replay_size : int, optional
+        Maximum number of items in the replay buffer.
+    """
+
+    def __init__(self, hidden_size, output_size, vocab_size=None,
+                 disallowed_tokens=None, replay_size=500):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.decoder = nn.Linear(hidden_size, output_size)
+        self.replay_buffer = SelfReplayBuffer(max_size=replay_size)
+        self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
+        self.register_buffer("importance_scores", torch.zeros(hidden_size))
+        self.gate = None
+        if vocab_size:
+            self.gate = EthicalGate(vocab_size, disallowed_tokens)
+            self.register_buffer("ethical_mask", self.gate.mask)
+            self.gate.registered = True
+        self.register_buffer("novelty_score", torch.tensor(0.0))
+        self.register_buffer("steps", torch.tensor(0))
+
+    def forward(self, hidden):
+        """Apply GENESIS biasing and compute logits."""
+        final_hidden = hidden + self.anchor_bias
+        logits = self.decoder(final_hidden)
+        raw_logits = logits.clone()
+        if self.gate:
+            logits = self.gate.filter_logits(logits, module=self)
+        return logits, raw_logits, final_hidden
+
+    def training_step(self, hidden, target, optimizer, criterion):
+        """Perform a training step using provided hidden states."""
+        self.train()
+        optimizer.zero_grad()
+        logits, raw_logits, final_hidden = self.forward(hidden)
+        loss_main = criterion(logits, target)
+        novelty = loss_main.detach()
+        self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
+        grad_hidden = torch.autograd.grad(loss_main, final_hidden, retain_graph=True)[0]
+        if grad_hidden is not None:
+            grad_norm = grad_hidden.abs().mean(dim=0)
+            threshold = grad_norm.mean() + 2 * grad_norm.std()
+            high_grad_mask = (grad_norm > threshold).float()
+            if high_grad_mask.sum().item() > 0:
+                avg_hidden = final_hidden.detach().mean(dim=0)
+                amp_rate = 0.1
+                self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
+                self.importance_scores += high_grad_mask
+        torch.nn.utils.clip_grad_norm_(self.parameters(), max_norm=5.0)
+        optimizer.step()
+        idx = torch.randint(0, hidden.size(0), (1,)).item()
+        self.replay_buffer.add(final_hidden[idx], target[idx])
+        self.steps += 1
+        loss_replay = torch.tensor(0.0)
+        if self.steps % 10 == 0:
+            replay_h, replay_t = self.replay_buffer.sample(batch_size=1, device=hidden.device)
+            if replay_h is not None:
+                replay_logits = self.decoder(replay_h + self.anchor_bias)
+                loss_replay = criterion(replay_logits, replay_t)
+                loss_replay.backward()
+                optimizer.step()
+        total_loss = loss_main.item() + loss_replay.item()
+        return total_loss
+
