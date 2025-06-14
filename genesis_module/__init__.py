@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 class SelfReplayBuffer:
     """Dynamic replay buffer for hidden representations and targets.
