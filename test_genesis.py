@@ -137,9 +137,14 @@ def test_attach_plugin():
     print("\nTesting attach_genesis_plugin helper")
     base = nn.Sequential(nn.Linear(10, 16), nn.ReLU(), nn.Linear(16, 8))
     plugin = GenesisPlugin(hidden_size=16, output_size=5, vocab_size=5)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    base = base.to(device)
 
+    # Plugin remains on CPU; attach_genesis_plugin should move it to `device`.
     handle = attach_genesis_plugin(base, plugin, layer_name="0")
-    x = torch.randn(2, 10)
+    assert next(plugin.parameters()).device == device
+
+    x = torch.randn(2, 10).to(device)
     _ = base(x)
     assert hasattr(base, "genesis_logits"), "Plugin logits not attached to base model"
     assert base.genesis_logits.shape == torch.Size([2, 5])
@@ -151,13 +156,17 @@ def test_attach_plugin_with_grad():
     """Gradients should propagate from plugin logits when with_grad=True."""
     base = nn.Sequential(nn.Linear(4, 6))
     plugin = GenesisPlugin(hidden_size=6, output_size=3, vocab_size=3)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    base = base.to(device)
+
     handle = attach_genesis_plugin(base, plugin, layer_name="0", with_grad=True)
+    assert next(plugin.parameters()).device == device
 
     optimizer = torch.optim.SGD(list(base.parameters()) + list(plugin.parameters()), lr=0.01)
     criterion = nn.CrossEntropyLoss()
 
-    x = torch.randn(2, 4)
-    y = torch.randint(0, 3, (2,))
+    x = torch.randn(2, 4).to(device)
+    y = torch.randint(0, 3, (2,)).to(device)
 
     optimizer.zero_grad()
     _ = base(x)

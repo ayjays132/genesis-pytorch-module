@@ -241,7 +241,9 @@ GENESIS can be added to any PyTorch model via the `GenesisPlugin` and the helper
 function `attach_genesis_plugin`. This function registers a forward hook on a
 chosen layer, routing that layer's hidden representation through the plugin.  An
 optional `with_grad` argument controls whether gradients flow from any loss
-using the plugin's logits back into the hooked layer.
+using the plugin's logits back into the hooked layer. When attaching, the plugin
+is automatically moved to the same device as the selected layer to prevent
+device mismatches.
 
 ```python
 from genesis_module import GenesisPlugin, attach_genesis_plugin

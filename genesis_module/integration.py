@@ -35,6 +35,26 @@ def attach_genesis_plugin(base_model: nn.Module, plugin: GenesisPlugin, layer_na
         raise ValueError(f"Layer '{layer_name}' not found in model")
     layer = modules[layer_name]
 
+    # Determine the device of the chosen layer by inspecting its parameters or
+    # buffers. If no parameters are present (e.g. an activation layer), fall
+    # back to the device of the base model or CPU.
+    device = None
+    for param in layer.parameters(recurse=False):
+        device = param.device
+        break
+    if device is None:
+        for buf in layer.buffers(recurse=False):
+            device = buf.device
+            break
+    if device is None:
+        try:
+            device = next(base_model.parameters()).device
+        except StopIteration:
+            device = torch.device("cpu")
+
+    # Move the plugin to the same device to avoid mismatched tensor devices
+    plugin.to(device)
+
     def hook(module, inp, out):
         if with_grad:
             logits, _, _ = plugin(out)
