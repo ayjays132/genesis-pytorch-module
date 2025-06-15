@@ -1,8 +1,9 @@
 import time
 import threading
 import curses
+import os
 from collections import deque
-from typing import Dict, Any
+from typing import Dict, Any, Optional, Tuple
 import torch
 import psutil
 
@@ -60,7 +61,7 @@ def get_gui_metrics(obj) -> Dict[str, Any]:
     }
 
 
-def launch_gui(plugin_or_model, refresh: float = 1.0):
+def launch_gui(plugin_or_model, refresh: Optional[float] = None) -> Tuple[threading.Event, threading.Thread]:
     """Launch a simple curses dashboard visualizing GENESIS metrics.
 
     The dashboard runs in a separate daemon thread and updates every ``refresh``
@@ -73,13 +74,23 @@ def launch_gui(plugin_or_model, refresh: float = 1.0):
         Model providing ``anchor_bias``, ``replay_buffer``, ``novelty_score`` and
         ``importance_scores`` attributes.
     refresh : float, optional
-        Interval in seconds between screen updates. Defaults to ``1.0``.
+        Interval in seconds between screen updates. If ``None``, the value is
+        read from the ``GENESIS_GUI_REFRESH`` environment variable or defaults
+        to ``1.0``.
 
     Returns
     -------
-    threading.Event
-        Event which can be set to terminate the dashboard.
+    (threading.Event, threading.Thread)
+        Event which can be set to terminate the dashboard and the dashboard
+        thread object so it can be joined.
     """
+
+    if refresh is None:
+        env_val = os.getenv("GENESIS_GUI_REFRESH")
+        try:
+            refresh = float(env_val) if env_val is not None else 1.0
+        except ValueError:
+            refresh = 1.0
 
     stop_event = threading.Event()
     novelty_history = deque(maxlen=50)
@@ -127,4 +138,4 @@ def launch_gui(plugin_or_model, refresh: float = 1.0):
 
     thread = threading.Thread(target=lambda: curses.wrapper(_dashboard), daemon=True)
     thread.start()
-    return stop_event
+    return stop_event, thread
