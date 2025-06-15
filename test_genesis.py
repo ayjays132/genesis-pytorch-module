@@ -502,17 +502,6 @@ def test_anchor_bias_clamped_after_many_steps_module():
 
 
 if __name__ == "__main__":
-    test_genesis_module()
-    test_genesis_plugin()
-    test_attach_plugin()
-    test_attach_plugin_with_grad()
-    test_apply_consolidation_penalty()
-    test_consolidation_penalty_effect()
-    test_anchor_bias_ref_update_threshold()
-    test_replay_buffer_sampling_after_many_steps()
-    test_update_priority_affects_sampling()
-    test_update_priority_invalid_indices()
-    test_negative_priority_clamped()
-    test_classifier_based_filtering()
-    test_anchor_bias_clamped_after_many_steps_plugin()
-    test_anchor_bias_clamped_after_many_steps_module()
+    # Delegate to pytest so running `python test_genesis.py` executes the full
+    # test suite defined in this module.
+    raise SystemExit(pytest.main([__file__]))
