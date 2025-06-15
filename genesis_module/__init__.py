@@ -193,7 +193,35 @@ class EthicalGate:
 
 
 class GenesisCore(nn.Module):
-    """Mixin providing replay, amplification, and gating utilities."""
+    """Mixin providing replay, amplification, and gating utilities.
+
+    Parameters
+    ----------
+    hidden_size : int
+        Dimensionality of the internal hidden representation.
+    output_size : int
+        Dimensionality of the output logits.
+    vocab_size : int, optional
+        Vocabulary size for ethical gating.
+    disallowed_tokens : list of int, optional
+        Token indices to suppress via the ethical gate.
+    replay_size : int, optional
+        Maximum number of items stored in the replay buffer.
+    bias_decay : float, optional
+        Exponential decay applied to ``anchor_bias`` each step.
+    bias_max : float, optional
+        Clamp value for ``anchor_bias``.
+    gate_use_classifier : bool, optional
+        Enable classifier-based gating.
+    gate_classifier_hidden : int, optional
+        Hidden dimension for the gating classifier.
+    gate_classifier_scale : float, optional
+        Scale factor for classifier penalty.
+    amp_rate : float, optional
+        Scale factor for sticky learning amplifier updates.
+    amp_threshold : float, optional
+        Standard deviation multiplier for amplifier trigger.
+    """
 
     def __init__(
         self,
@@ -207,6 +235,8 @@ class GenesisCore(nn.Module):
         gate_use_classifier: bool = False,
         gate_classifier_hidden: int = 32,
         gate_classifier_scale: float = 5.0,
+        amp_rate: float = 0.1,
+        amp_threshold: float = 2.0,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -215,6 +245,8 @@ class GenesisCore(nn.Module):
         self.anchor_bias = nn.Parameter(torch.zeros(hidden_size))
         self.bias_decay = bias_decay
         self.bias_max = bias_max
+        self.amp_rate = amp_rate
+        self.amp_threshold = amp_threshold
         self.register_buffer("anchor_bias_ref", torch.zeros(hidden_size))
         self.register_buffer("importance_scores", torch.zeros(hidden_size))
         self.gate = None
@@ -263,13 +295,12 @@ class GenesisCore(nn.Module):
         amplifier_triggered = False
         if grad_hidden is not None:
             grad_norm = grad_hidden.abs().mean(dim=0)
-            threshold = grad_norm.mean() + 2 * grad_norm.std()
+            threshold = grad_norm.mean() + self.amp_threshold * grad_norm.std()
             high_grad_mask = (grad_norm > threshold).float()
             if high_grad_mask.sum().item() > 0:
                 amplifier_triggered = True
                 avg_hidden = final_hidden.detach().mean(dim=0)
-                amp_rate = 0.1
-                self.anchor_bias.data += amp_rate * high_grad_mask * avg_hidden
+                self.anchor_bias.data += self.amp_rate * high_grad_mask * avg_hidden
                 self.importance_scores += high_grad_mask
         if self.importance_scores.sum() > 0:
             reg_loss = 0.1 * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
@@ -314,6 +345,8 @@ class IntegratedLearningModule(GenesisCore):
         gate_use_classifier: bool = False,
         gate_classifier_hidden: int = 32,
         gate_classifier_scale: float = 5.0,
+        amp_rate: float = 0.1,
+        amp_threshold: float = 2.0,
     ):
         """
         input_size: dimension of input features (e.g. embedding size)
@@ -324,6 +357,8 @@ class IntegratedLearningModule(GenesisCore):
         gate_use_classifier: enable additional classifier-based filtering
         gate_classifier_hidden: hidden dimension for classifier if used
         gate_classifier_scale: scale factor for classifier penalty
+        amp_rate: scale factor for sticky learning amplifier updates
+        amp_threshold: standard deviation multiplier for amplifier trigger
         """
         super().__init__(
             hidden_size,
@@ -335,6 +370,8 @@ class IntegratedLearningModule(GenesisCore):
             gate_use_classifier=gate_use_classifier,
             gate_classifier_hidden=gate_classifier_hidden,
             gate_classifier_scale=gate_classifier_scale,
+            amp_rate=amp_rate,
+            amp_threshold=amp_threshold,
         )
         self.encoder = nn.LSTM(input_size, hidden_size, batch_first=True)
 
@@ -370,6 +407,10 @@ class GenesisPlugin(GenesisCore):
         Token indices that should be suppressed by the ethical gate.
     replay_size : int, optional
         Maximum number of items in the replay buffer.
+    amp_rate : float, optional
+        Scale factor for sticky learning amplifier updates.
+    amp_threshold : float, optional
+        Standard deviation multiplier for amplifier trigger.
     """
 
     def __init__(
@@ -384,6 +425,8 @@ class GenesisPlugin(GenesisCore):
         gate_use_classifier: bool = False,
         gate_classifier_hidden: int = 32,
         gate_classifier_scale: float = 5.0,
+        amp_rate: float = 0.1,
+        amp_threshold: float = 2.0,
     ):
         super().__init__(
             hidden_size,
@@ -396,6 +439,8 @@ class GenesisPlugin(GenesisCore):
             gate_use_classifier=gate_use_classifier,
             gate_classifier_hidden=gate_classifier_hidden,
             gate_classifier_scale=gate_classifier_scale,
+            amp_rate=amp_rate,
+            amp_threshold=amp_threshold,
         )
 
     def forward(self, hidden):
