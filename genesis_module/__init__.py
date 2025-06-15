@@ -1,3 +1,5 @@
+__version__ = "0.1.1"
+
 import torch
 import torch.nn as nn
 from collections import deque
