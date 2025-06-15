@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import pytest
+import time
 from genesis_module import (
     IntegratedLearningModule,
     SelfReplayBuffer,
@@ -609,6 +610,37 @@ def test_gui_metric_retrieval():
     assert "cpu_percent" in metrics
     assert "gpu_memory_mb" in metrics
     assert "gpu_utilization" in metrics
+
+
+def test_gui_thread_stops(monkeypatch):
+    """Dashboard thread should exit cleanly when stop_event is set."""
+    model = IntegratedLearningModule(2, 4, 3)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
+    import genesis_module.gui as gui
+
+    class DummyScr:
+        def addstr(self, *args, **kwargs):
+            pass
+
+        def erase(self):
+            pass
+
+        def refresh(self):
+            pass
+
+    monkeypatch.setattr(gui.curses, "wrapper", lambda func: func(DummyScr()))
+    monkeypatch.setattr(gui.curses, "curs_set", lambda *_: None)
+    monkeypatch.setattr(gui.curses, "start_color", lambda: None)
+    monkeypatch.setattr(gui.curses, "init_pair", lambda *args: None)
+    monkeypatch.setattr(gui.curses, "color_pair", lambda n: 0)
+
+    stop_event, thread = gui.launch_gui(model, refresh=0.05)
+    time.sleep(0.1)
+    stop_event.set()
+    thread.join(timeout=1.0)
+    assert not thread.is_alive()
 
 
 if __name__ == "__main__":

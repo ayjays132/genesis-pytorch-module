@@ -338,7 +338,7 @@ thread. Simply call:
 from genesis_module import IntegratedLearningModule, launch_gui
 
 model = IntegratedLearningModule(128, 256, 100)
-stop_event = launch_gui(model)
+stop_event, gui_thread = launch_gui(model)
 ```
 
 The display shows the current `anchor_bias` histogram and rolling
@@ -346,7 +346,7 @@ The display shows the current `anchor_bias` histogram and rolling
 utilisation alongside memory consumption.  High novelty scores and
 excessive memory or processor usage are highlighted in red.  Replay buffer
 statistics, step count, and amplifier/gate status remain visible.  When training
-finishes call `stop_event.set()` to close the dashboard.
+finishes call `stop_event.set()` and join `gui_thread` to close the dashboard.
 
 ## License
 
