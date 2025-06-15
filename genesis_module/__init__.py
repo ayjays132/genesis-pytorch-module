@@ -362,3 +362,12 @@ class GenesisPlugin(GenesisCore):
         return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion)
 from .integration import attach_genesis_plugin
 
+__all__ = [
+    "SelfReplayBuffer",
+    "EthicalGate",
+    "GenesisCore",
+    "GenesisPlugin",
+    "IntegratedLearningModule",
+    "attach_genesis_plugin",
+]
+
