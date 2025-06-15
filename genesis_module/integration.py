@@ -1,5 +1,8 @@
+"""Utilities for attaching GENESIS plugins to existing PyTorch models."""
+
 import torch
 import torch.nn as nn
+
 from . import GenesisPlugin
 
 

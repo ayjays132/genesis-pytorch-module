@@ -1,9 +1,11 @@
+"""Simple curses-based dashboard for monitoring GENESIS training metrics."""
+
 import time
 import threading
 import curses
 import os
 from collections import deque
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import torch
 import psutil
 
@@ -61,7 +63,10 @@ def get_gui_metrics(obj) -> Dict[str, Any]:
     }
 
 
-def launch_gui(plugin_or_model, refresh: Optional[float] = None) -> Tuple[threading.Event, threading.Thread]:
+def launch_gui(
+    plugin_or_model,
+    refresh: Optional[float] = None,
+) -> Tuple[threading.Event, threading.Thread]:
     """Launch a simple curses dashboard visualizing GENESIS metrics.
 
     The dashboard runs in a separate daemon thread and updates every ``refresh``
@@ -103,13 +108,28 @@ def launch_gui(plugin_or_model, refresh: Optional[float] = None) -> Tuple[thread
         while not stop_event.is_set():
             metrics = get_gui_metrics(plugin_or_model)
             novelty_history.append(metrics["novelty_score"])
-            hist = torch.histc(metrics["anchor_bias"], bins=10, min=-float(plugin_or_model.bias_max), max=float(plugin_or_model.bias_max))
+            hist = torch.histc(
+                metrics["anchor_bias"],
+                bins=10,
+                min=-float(plugin_or_model.bias_max),
+                max=float(plugin_or_model.bias_max),
+            )
             stdscr.erase()
             stdscr.addstr(0, 0, "GENESIS Dashboard", curses.color_pair(1))
             stdscr.addstr(2, 0, f"Replay buffer size: {metrics['replay_buffer_len']}")
             stdscr.addstr(3, 0, f"Avg priority: {metrics['avg_priority']:.3f}")
-            stdscr.addstr(4, 0, f"Amplifier: {'ON' if metrics['amplifier_active'] else 'OFF'}  Gate: {'ON' if metrics['gate_active'] else 'OFF'}")
-            stdscr.addstr(5, 0, f"Step: {metrics['step_count']}  Anchor μ={metrics['anchor_mean']:.3f} σ={metrics['anchor_std']:.3f}")
+            stdscr.addstr(
+                4,
+                0,
+                f"Amplifier: {'ON' if metrics['amplifier_active'] else 'OFF'}  "
+                f"Gate: {'ON' if metrics['gate_active'] else 'OFF'}",
+            )
+            stdscr.addstr(
+                5,
+                0,
+                f"Step: {metrics['step_count']}  "
+                f"Anchor μ={metrics['anchor_mean']:.3f} σ={metrics['anchor_std']:.3f}",
+            )
             nov_color = curses.color_pair(2) if metrics['novelty_score'] > 0.8 else curses.A_NORMAL
             stdscr.addstr(6, 0, f"Novelty score: {metrics['novelty_score']:.3f}", nov_color)
             mem_line = (
