@@ -573,6 +573,5 @@ def test_anchor_bias_clamped_after_many_steps_module():
 
 
 if __name__ == "__main__":
-    # Delegate to pytest so running `python test_genesis.py` executes the full
-    # test suite defined in this module.
-    raise SystemExit(pytest.main([__file__]))
+    # Delegate to pytest so running this file executes all available tests.
+    raise SystemExit(pytest.main())
