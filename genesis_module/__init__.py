@@ -13,6 +13,12 @@ class SelfReplayBuffer:
         Data type used to store the hidden representations. ``float16`` reduces
         memory footprint while having negligible impact on accuracy for
         normalized activations.
+
+    Notes
+    -----
+    The ``priority`` value associated with each entry is clamped to be
+    non-negative when added to the buffer. Any negative value will be stored
+    as ``0.0``.
     """
 
     def __init__(self, max_size=1000, dtype=torch.float16):
@@ -25,7 +31,8 @@ class SelfReplayBuffer:
         """Store a hidden state and target with an associated priority."""
         hidden_detached = hidden.detach().to(self.dtype).cpu()
         target_detached = target.detach().cpu()
-        self.buffer.append((hidden_detached, target_detached, float(priority)))
+        priority_clamped = max(0.0, float(priority))
+        self.buffer.append((hidden_detached, target_detached, priority_clamped))
         if len(self.buffer) > self.max_size:
             self.buffer.pop(0)
 

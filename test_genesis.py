@@ -399,6 +399,17 @@ def test_sampling_with_zero_priorities():
     assert t_sample.shape == torch.Size([2])
 
 
+def test_negative_priority_clamped():
+    """Negative priorities should be clamped to zero on insertion."""
+    buf = SelfReplayBuffer(max_size=1)
+    buf.add(torch.tensor([1.0]), torch.tensor(0), priority=-5.0)
+
+    assert buf.buffer[0][2] == 0.0
+
+    h, t = buf.sample(batch_size=1)
+    assert h is not None and t is not None
+
+
 def test_sample_inconsistent_shapes(monkeypatch):
     """Sampling should raise an error when hidden shapes differ."""
     buf = SelfReplayBuffer(max_size=2)
@@ -491,6 +502,7 @@ if __name__ == "__main__":
     test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
     test_update_priority_invalid_indices()
+    test_negative_priority_clamped()
     test_classifier_based_filtering()
     test_anchor_bias_clamped_after_many_steps_plugin()
     test_anchor_bias_clamped_after_many_steps_module()
