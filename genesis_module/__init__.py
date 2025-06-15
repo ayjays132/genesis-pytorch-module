@@ -21,16 +21,17 @@ class SelfReplayBuffer:
     as ``0.0``.
     """
 
-    def __init__(self, max_size=1000, dtype=torch.float16):
+    def __init__(self, max_size=1000, dtype=torch.float16, device=None):
         self.max_size = max_size
         self.dtype = dtype
+        self.device = torch.device(device) if device is not None else torch.device("cpu")
         # list of tuples: (hidden_repr, target, priority)
         self.buffer = []
 
     def add(self, hidden, target, priority=1.0):
         """Store a hidden state and target with an associated priority."""
-        hidden_detached = hidden.detach().to(self.dtype).cpu()
-        target_detached = target.detach().cpu()
+        hidden_detached = hidden.detach().to(device=self.device, dtype=self.dtype)
+        target_detached = target.detach().to(self.device)
         priority_clamped = max(0.0, float(priority))
         self.buffer.append((hidden_detached, target_detached, priority_clamped))
         if len(self.buffer) > self.max_size:
@@ -49,11 +50,12 @@ class SelfReplayBuffer:
         indices = torch.multinomial(probs, batch_size, replacement=True)
         hiddens, targets = [], []
         shapes = []
+        target_device = torch.device(device) if device is not None else self.device
         for idx in indices:
             h, t, _ = self.buffer[int(idx)]
-            if device:
-                h = h.to(device=device, dtype=torch.float32)
-                t = t.to(device)
+            if device is not None and target_device != self.device:
+                h = h.to(device=target_device, dtype=torch.float32)
+                t = t.to(target_device)
             else:
                 h = h.to(dtype=torch.float32)
             hiddens.append(h)
