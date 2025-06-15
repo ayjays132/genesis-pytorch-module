@@ -26,6 +26,7 @@ class StepCounterOptimizer(torch.optim.Adam):
         self.zero_calls += 1
         return super().zero_grad(set_to_none=set_to_none)
 
+
 def test_genesis_module():
     print("Starting GENESIS module test...")
 
@@ -37,17 +38,23 @@ def test_genesis_module():
     vocab_size = output_dim
     disallowed = [0, 1, 2]
 
-    model = IntegratedLearningModule(input_dim, hidden_dim, output_dim, vocab_size=vocab_size, disallowed_tokens=disallowed)
+    model = IntegratedLearningModule(
+        input_dim, hidden_dim, output_dim, vocab_size=vocab_size, disallowed_tokens=disallowed
+    )
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Model initialized and moved to {device}.")
 
-    x_batch = torch.randn(4, 10, input_dim).to(device) # Batch size 4, seq_len 10
+    x_batch = torch.randn(4, 10, input_dim).to(device)  # Batch size 4, seq_len 10
     logits, raw_logits, final_hidden = model(x_batch)
 
     assert logits.shape == torch.Size([4, output_dim]), f"Expected logits shape [4, {output_dim}], got {logits.shape}"
-    assert raw_logits.shape == torch.Size([4, output_dim]), f"Expected raw_logits shape [4, {output_dim}], got {raw_logits.shape}"
-    assert final_hidden.shape == torch.Size([4, hidden_dim]), f"Expected final_hidden shape [4, {hidden_dim}], got {final_hidden.shape}"
+    assert raw_logits.shape == torch.Size(
+        [4, output_dim]
+    ), f"Expected raw_logits shape [4, {output_dim}], got {raw_logits.shape}"
+    assert final_hidden.shape == torch.Size(
+        [4, hidden_dim]
+    ), f"Expected final_hidden shape [4, {hidden_dim}], got {final_hidden.shape}"
     print("Basic forward pass successful. Shapes are correct.")
 
     # Test 2: Ethical Gating
@@ -81,9 +88,15 @@ def test_genesis_module():
     # Check if anchor bias changed and reference updated
     assert not torch.equal(initial_anchor_bias, model.anchor_bias), "Anchor bias did not change after training steps."
     if model.importance_scores.sum() > 0:
-        assert not torch.equal(initial_anchor_bias_ref, model.anchor_bias_ref), "Anchor bias reference did not update when amplifier triggered."
-    assert not torch.equal(initial_novelty_score, model.novelty_score), "Novelty score did not change after training steps."
-    assert lr_after_first is not None and lr_after_first != initial_lr, "Learning rate was not updated by adaptive scheduler."
+        assert not torch.equal(
+            initial_anchor_bias_ref, model.anchor_bias_ref
+        ), "Anchor bias reference did not update when amplifier triggered."
+    assert not torch.equal(
+        initial_novelty_score, model.novelty_score
+    ), "Novelty score did not change after training steps."
+    assert (
+        lr_after_first is not None and lr_after_first != initial_lr
+    ), "Learning rate was not updated by adaptive scheduler."
     print("Training steps successful: Anchor bias and novelty score updated.")
 
     # Test 4: Replay buffer functionality
@@ -95,7 +108,9 @@ def test_genesis_module():
     # Sample from buffer and check shapes
     h_replay, t_replay = model.replay_buffer.sample(batch_size=1, device=device)
     assert h_replay is not None and t_replay is not None, "Failed to sample from replay buffer."
-    assert h_replay.shape == torch.Size([1, hidden_dim]), f"Expected replay hidden shape [1, {hidden_dim}], got {h_replay.shape}"
+    assert h_replay.shape == torch.Size(
+        [1, hidden_dim]
+    ), f"Expected replay hidden shape [1, {hidden_dim}], got {h_replay.shape}"
     assert t_replay.shape == torch.Size([1]), f"Expected replay target shape [1], got {t_replay.shape}"
     # Ensure memory-efficient dtype storage and automatic float32 conversion
     assert model.replay_buffer.buffer[0][0].dtype == torch.float16, "Replay buffer should store float16 by default"
@@ -103,6 +118,7 @@ def test_genesis_module():
     print("Replay buffer sampling successful.")
 
     print("\nAll GENESIS module tests passed successfully!")
+
 
 def test_genesis_plugin():
     print("\nTesting GenesisPlugin integration")
@@ -130,7 +146,9 @@ def test_genesis_plugin():
     loss_val = plugin.training_step(hidden, y, optimizer, criterion)
     assert len(plugin.replay_buffer.buffer) > 0
     if plugin.importance_scores.sum() > 0:
-        assert not torch.equal(initial_anchor_ref, plugin.anchor_bias_ref), "Plugin anchor bias reference did not update when amplifier triggered."
+        assert not torch.equal(
+            initial_anchor_ref, plugin.anchor_bias_ref
+        ), "Plugin anchor bias reference did not update when amplifier triggered."
     print(f"GenesisPlugin training step loss: {loss_val:.4f}")
 
 
@@ -248,6 +266,37 @@ def test_apply_consolidation_penalty():
     model.anchor_bias.data[0] = 0.5
     penalty_nonzero = model.apply_consolidation(lambda_reg=1.0)
     assert penalty_nonzero.item() > 0.0
+
+
+def test_consolidation_penalty_effect():
+    """Large lambda_reg keeps anchor bias closer to its reference."""
+    torch.manual_seed(0)
+    model_low = IntegratedLearningModule(4, 6, 3)
+    model_high = IntegratedLearningModule(4, 6, 3)
+    model_high.load_state_dict(model_low.state_dict())
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_low = model_low.to(device)
+    model_high = model_high.to(device)
+
+    for m in (model_low, model_high):
+        m.importance_scores.fill_(1.0)
+        m.anchor_bias.data.fill_(0.1)
+        m.anchor_bias_ref.zero_()
+
+    opt_low = torch.optim.SGD(model_low.parameters(), lr=0.1)
+    opt_high = torch.optim.SGD(model_high.parameters(), lr=0.1)
+    crit = nn.CrossEntropyLoss()
+
+    x = torch.randn(2, 3, 4).to(device)
+    y = torch.randint(0, 3, (2,)).to(device)
+
+    model_low.training_step(x, y, opt_low, crit, lambda_reg=0.0)
+    dist_low = model_low.anchor_bias.abs().sum().item()
+
+    model_high.training_step(x, y, opt_high, crit, lambda_reg=5.0)
+    dist_high = model_high.anchor_bias.abs().sum().item()
+
+    assert dist_high < dist_low
 
 
 def test_anchor_bias_ref_update_threshold():
@@ -430,12 +479,14 @@ def test_anchor_bias_clamped_after_many_steps_module():
 
     assert torch.all(model.anchor_bias.abs() <= bias_max + 1e-6)
 
+
 if __name__ == "__main__":
     test_genesis_module()
     test_genesis_plugin()
     test_attach_plugin()
     test_attach_plugin_with_grad()
     test_apply_consolidation_penalty()
+    test_consolidation_penalty_effect()
     test_anchor_bias_ref_update_threshold()
     test_replay_buffer_sampling_after_many_steps()
     test_update_priority_affects_sampling()
@@ -443,5 +494,3 @@ if __name__ == "__main__":
     test_classifier_based_filtering()
     test_anchor_bias_clamped_after_many_steps_plugin()
     test_anchor_bias_clamped_after_many_steps_module()
-
-

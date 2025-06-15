@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+
 class SelfReplayBuffer:
     """Dynamic replay buffer for hidden representations and targets.
 
@@ -95,6 +96,7 @@ class SelfReplayBuffer:
             h, t, _ = self.buffer[idx]
             self.buffer[idx] = (h, t, float(value))
 
+
 class EthicalGate:
     """Ethical gating layer to filter/adjust logits according to allowed tokens.
 
@@ -114,8 +116,9 @@ class EthicalGate:
         logits.
     """
 
-    def __init__(self, vocab_size, disallowed_tokens=None, *, use_classifier=False,
-                 classifier_hidden=32, classifier_scale=5.0):
+    def __init__(
+        self, vocab_size, disallowed_tokens=None, *, use_classifier=False, classifier_hidden=32, classifier_scale=5.0
+    ):
         self.vocab_size = vocab_size
         # Create a mask tensor for logits: 0 for disallowed tokens, 1 for allowed ones
         mask = torch.ones(vocab_size, dtype=torch.float32)
@@ -177,13 +180,23 @@ class EthicalGate:
         logits = logits - self.classifier_scale * (1.0 - safety_scores.to(logits.device))
         return logits
 
+
 class GenesisCore(nn.Module):
     """Mixin providing replay, amplification, and gating utilities."""
 
-    def __init__(self, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
-                 replay_size=500, bias_decay: float = 0.999, bias_max: float = 5.0,
-                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
-                 gate_classifier_scale: float = 5.0):
+    def __init__(
+        self,
+        hidden_size,
+        output_size,
+        vocab_size=None,
+        disallowed_tokens=None,
+        replay_size=500,
+        bias_decay: float = 0.999,
+        bias_max: float = 5.0,
+        gate_use_classifier: bool = False,
+        gate_classifier_hidden: int = 32,
+        gate_classifier_scale: float = 5.0,
+    ):
         super().__init__()
         self.hidden_size = hidden_size
         self.decoder = nn.Linear(hidden_size, output_size)
@@ -226,13 +239,15 @@ class GenesisCore(nn.Module):
             group["lr"] = lr
         return lr
 
-    def _shared_training_logic(self, final_hidden, logits, target, optimizer, criterion):
+    def _shared_training_logic(self, final_hidden, logits, target, optimizer, criterion, *, lambda_reg: float = 0.0):
         final_hidden.retain_grad()
         loss_main = criterion(logits, target)
         novelty = loss_main.detach()
         self.novelty_score = 0.9 * self.novelty_score + 0.1 * novelty
         self.update_learning_rate(optimizer)
-        loss_main.backward(retain_graph=True)
+        penalty = self.apply_consolidation(lambda_reg=lambda_reg)
+        loss_total = loss_main + penalty
+        loss_total.backward(retain_graph=True)
         grad_hidden = final_hidden.grad
         amplifier_triggered = False
         if grad_hidden is not None:
@@ -265,7 +280,7 @@ class GenesisCore(nn.Module):
             torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         if amplifier_triggered:
             self.anchor_bias_ref = self.anchor_bias.detach().clone()
-        total_loss = loss_main.item() + loss_replay.item()
+        total_loss = loss_main.item() + penalty.item() + loss_replay.item()
         return total_loss
 
     def apply_consolidation(self, lambda_reg=0.1):
@@ -273,11 +288,22 @@ class GenesisCore(nn.Module):
             return torch.tensor(0.0, device=self.anchor_bias.device)
         penalty = lambda_reg * torch.sum(self.importance_scores * (self.anchor_bias - self.anchor_bias_ref) ** 2)
         return penalty
+
+
 class IntegratedLearningModule(GenesisCore):
-    def __init__(self, input_size, hidden_size, output_size, vocab_size=None, disallowed_tokens=None,
-                 bias_decay: float = 0.999, bias_max: float = 5.0,
-                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
-                 gate_classifier_scale: float = 5.0):
+    def __init__(
+        self,
+        input_size,
+        hidden_size,
+        output_size,
+        vocab_size=None,
+        disallowed_tokens=None,
+        bias_decay: float = 0.999,
+        bias_max: float = 5.0,
+        gate_use_classifier: bool = False,
+        gate_classifier_hidden: int = 32,
+        gate_classifier_scale: float = 5.0,
+    ):
         """
         input_size: dimension of input features (e.g. embedding size)
         hidden_size: dimension of hidden state in the core model
@@ -289,7 +315,8 @@ class IntegratedLearningModule(GenesisCore):
         gate_classifier_scale: scale factor for classifier penalty
         """
         super().__init__(
-            hidden_size, output_size,
+            hidden_size,
+            output_size,
             vocab_size=vocab_size,
             disallowed_tokens=disallowed_tokens,
             bias_decay=bias_decay,
@@ -306,17 +333,14 @@ class IntegratedLearningModule(GenesisCore):
         final_hidden = out[:, -1, :]
         return self.core_forward(final_hidden)
 
-    def training_step(self, x, target, optimizer, criterion):
+    def training_step(self, x, target, optimizer, criterion, *, lambda_reg: float = 0.0):
         self.train()
         optimizer.zero_grad()
         with torch.no_grad():
             self.anchor_bias.mul_(self.bias_decay)
             torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         logits, raw_logits, final_hidden = self.forward(x)
-        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion)
-
-
-
+        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion, lambda_reg=lambda_reg)
 
 
 class GenesisPlugin(GenesisCore):
@@ -337,13 +361,22 @@ class GenesisPlugin(GenesisCore):
         Maximum number of items in the replay buffer.
     """
 
-    def __init__(self, hidden_size, output_size, vocab_size=None,
-                 disallowed_tokens=None, replay_size=500,
-                 bias_decay: float = 0.999, bias_max: float = 5.0,
-                 gate_use_classifier: bool = False, gate_classifier_hidden: int = 32,
-                 gate_classifier_scale: float = 5.0):
+    def __init__(
+        self,
+        hidden_size,
+        output_size,
+        vocab_size=None,
+        disallowed_tokens=None,
+        replay_size=500,
+        bias_decay: float = 0.999,
+        bias_max: float = 5.0,
+        gate_use_classifier: bool = False,
+        gate_classifier_hidden: int = 32,
+        gate_classifier_scale: float = 5.0,
+    ):
         super().__init__(
-            hidden_size, output_size,
+            hidden_size,
+            output_size,
             vocab_size=vocab_size,
             disallowed_tokens=disallowed_tokens,
             replay_size=replay_size,
@@ -353,17 +386,20 @@ class GenesisPlugin(GenesisCore):
             gate_classifier_hidden=gate_classifier_hidden,
             gate_classifier_scale=gate_classifier_scale,
         )
+
     def forward(self, hidden):
         return self.core_forward(hidden)
 
-    def training_step(self, hidden, target, optimizer, criterion):
+    def training_step(self, hidden, target, optimizer, criterion, *, lambda_reg: float = 0.0):
         self.train()
         optimizer.zero_grad()
         with torch.no_grad():
             self.anchor_bias.mul_(self.bias_decay)
             torch.clamp_(self.anchor_bias, -self.bias_max, self.bias_max)
         logits, raw_logits, final_hidden = self.forward(hidden)
-        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion)
+        return self._shared_training_logic(final_hidden, logits, target, optimizer, criterion, lambda_reg=lambda_reg)
+
+
 from .integration import attach_genesis_plugin
 
 __all__ = [
@@ -374,4 +410,3 @@ __all__ = [
     "IntegratedLearningModule",
     "attach_genesis_plugin",
 ]
-
