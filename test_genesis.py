@@ -7,6 +7,7 @@ from genesis_module import (
     EthicalGate,
     GenesisPlugin,
     attach_genesis_plugin,
+    get_gui_metrics,
 )
 
 
@@ -588,6 +589,21 @@ def test_anchor_bias_clamped_after_many_steps_module():
         model.training_step(x, y, opt, crit)
 
     assert torch.all(model.anchor_bias.abs() <= bias_max + 1e-6)
+
+
+def test_gui_metric_retrieval():
+    model = IntegratedLearningModule(4, 6, 3)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    opt = torch.optim.Adam(model.parameters(), lr=0.001)
+    crit = nn.CrossEntropyLoss()
+    x = torch.randn(2, 3, 4).to(device)
+    y = torch.randint(0, 3, (2,)).to(device)
+    model.training_step(x, y, opt, crit)
+
+    metrics = get_gui_metrics(model)
+    assert isinstance(metrics["novelty_score"], float)
+    assert metrics["replay_buffer_len"] > 0
 
 
 if __name__ == "__main__":

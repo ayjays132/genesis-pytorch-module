@@ -328,6 +328,24 @@ python test_genesis.py
 
 `requirements-dev.txt` lists `torch`, `pytest`, and `build` for convenience.
 
+## Monitoring GENESIS
+
+During training you can launch a lightweight dashboard to visualize key metrics
+in real time. The dashboard uses a curses interface and runs in a background
+thread. Simply call:
+
+```python
+from genesis_module import IntegratedLearningModule, launch_gui
+
+model = IntegratedLearningModule(128, 256, 100)
+stop_event = launch_gui(model)
+```
+
+The display shows the current `anchor_bias` histogram, the rolling
+`novelty_score`, replay buffer statistics, and whether the amplifier and ethical
+gate are active. When training finishes call `stop_event.set()` to close the
+dashboard.
+
 ## License
 
 This project is licensed under the [MIT License](LICENSE).

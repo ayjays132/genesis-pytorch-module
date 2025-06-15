@@ -474,6 +474,7 @@ class GenesisPlugin(GenesisCore):
 
 
 from .integration import attach_genesis_plugin
+from .gui import launch_gui, get_gui_metrics
 
 __all__ = [
     "SelfReplayBuffer",
@@ -482,4 +483,6 @@ __all__ = [
     "GenesisPlugin",
     "IntegratedLearningModule",
     "attach_genesis_plugin",
+    "launch_gui",
+    "get_gui_metrics",
 ]
