@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from collections import deque
 
 
 class SelfReplayBuffer:
@@ -25,17 +26,16 @@ class SelfReplayBuffer:
         self.max_size = max_size
         self.dtype = dtype
         self.device = torch.device(device) if device is not None else torch.device("cpu")
-        # list of tuples: (hidden_repr, target, priority)
-        self.buffer = []
+        # deque of tuples: (hidden_repr, target, priority)
+        self.buffer = deque(maxlen=self.max_size)
 
     def add(self, hidden, target, priority=1.0):
         """Store a hidden state and target with an associated priority."""
         hidden_detached = hidden.detach().to(device=self.device, dtype=self.dtype)
         target_detached = target.detach().to(self.device)
         priority_clamped = max(0.0, float(priority))
+        # deque automatically discards oldest items when maxlen is reached
         self.buffer.append((hidden_detached, target_detached, priority_clamped))
-        if len(self.buffer) > self.max_size:
-            self.buffer.pop(0)
 
     def sample(self, batch_size=1, device=None):
         """Sample a batch of stored (hidden, target) pairs."""
