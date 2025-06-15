@@ -298,16 +298,6 @@ class IntegratedLearningModule(GenesisCore):
         final_hidden = out[:, -1, :]
         return self.core_forward(final_hidden)
 
-    def update_learning_rate(self, optimizer, base_lr=1e-3, min_lr=1e-5, max_lr=1e-2):
-        """Dynamically adjust learning rate based on novelty_score."""
-        novelty_val = float(self.novelty_score)
-        progress = 1.0 - torch.tanh(torch.tensor(novelty_val)).item()
-        lr = base_lr + (max_lr - base_lr) * progress
-        lr = max(min_lr, min(max_lr, lr))
-        for group in optimizer.param_groups:
-            group["lr"] = lr
-        return lr
-
     def training_step(self, x, target, optimizer, criterion):
         self.train()
         optimizer.zero_grad()
