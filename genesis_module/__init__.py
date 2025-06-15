@@ -40,6 +40,7 @@ class SelfReplayBuffer:
             probs = priorities / total
         indices = torch.multinomial(probs, batch_size, replacement=True)
         hiddens, targets = [], []
+        shapes = []
         for idx in indices:
             h, t, _ = self.buffer[int(idx)]
             if device:
@@ -49,8 +50,11 @@ class SelfReplayBuffer:
                 h = h.to(dtype=torch.float32)
             hiddens.append(h)
             targets.append(t)
+            shapes.append(tuple(h.shape))
         # Stack into tensors for batch processing
         # hidden shape might be [hidden_dim] or [seq_len, hidden_dim]; ensure consistent usage
+        if len(set(shapes)) > 1:
+            raise ValueError(f"Inconsistent hidden state shapes: {shapes}")
         hiddens = torch.stack(hiddens, dim=0)
         targets = torch.stack(targets, dim=0)
         return hiddens, targets
