@@ -238,39 +238,65 @@ GENESIS represents a novel approach to enhancing AGI learning by drawing inspira
 
 ## 13. Integration with Existing Models
 
-GENESIS can be added to any PyTorch model via the `GenesisPlugin` and the helper
-function `attach_genesis_plugin`. This function registers a forward hook on a
-chosen layer, routing that layer's hidden representation through the plugin.  An
-optional `with_grad` argument controls whether gradients flow from any loss
-using the plugin's logits back into the hooked layer. When attaching, the plugin
-is automatically moved to the same device as the selected layer to prevent
-device mismatches.
+GENESIS can be added to any PyTorch model via the `GenesisPlugin` and the
+`attach_genesis_plugin` helper. The helper registers a forward hook on a chosen
+layer and routes that layer's output through the plugin.  The returned handle can
+be used to remove the hook later.
+
+### Step‑by‑Step
+
+1. **Import the plugin and helper.**
+2. **Create or load your base model.** Any `nn.Module` can be augmented.
+3. **Instantiate a `GenesisPlugin`.** Specify the hidden size coming from the
+   target layer and the output size of the plugin.
+4. **Attach the plugin** with `attach_genesis_plugin(base, plugin,
+   layer_name, with_grad=...)`. The plugin is moved to the same device as the
+   layer to avoid mismatched tensors.
+5. **Run forward passes and optionally compute a loss** from the plugin's logits
+   (available as `base.genesis_logits` by default).
+6. **Remove the hook** via `handle.remove()` when the plugin is no longer
+   required.
+
+The `with_grad` flag controls whether the plugin participates in the autograd
+graph of the base model:
+
+* `with_grad=False` (default) executes the plugin under `torch.no_grad()`. The
+  plugin's logits can still be inspected, but gradients from any loss computed on
+  them will **not** backpropagate into the hooked layer or the plugin's
+  parameters.
+* `with_grad=True` runs the plugin with gradient tracking so that losses using
+  `base.genesis_logits` propagate through both the plugin and the selected layer.
 
 ```python
 from genesis_module import GenesisPlugin, attach_genesis_plugin
 import torch.nn as nn
 
-# Example base model
 base = nn.Sequential(
     nn.Linear(32, 64),
     nn.ReLU(),
-    nn.Linear(64, 10)
+    nn.Linear(64, 10),
 )
 
-# Attach plugin to the first linear layer
-plugin = GenesisPlugin(hidden_size=64, output_size=20, vocab_size=20)
-# Enable gradient flow from plugin logits back to the hooked layer
-handle = attach_genesis_plugin(base, plugin, layer_name='0', with_grad=True)
+# Attach plugin to the first linear layer and allow gradients to flow
+plugin_a = GenesisPlugin(hidden_size=64, output_size=20, vocab_size=20)
+handle_a = attach_genesis_plugin(base, plugin_a, layer_name="0", with_grad=True)
 
-# After a forward pass, the plugin's logits are stored on the base model
+# Additional plugins can be attached to different layers
+plugin_b = GenesisPlugin(hidden_size=10, output_size=5)
+handle_b = attach_genesis_plugin(base, plugin_b, layer_name="2", output_attr="control_logits")
+
 x = torch.randn(8, 32)
 _ = base(x)
-print(base.genesis_logits.shape)  # torch.Size([8, 20])
+print(base.genesis_logits.shape)      # from plugin_a
+print(base.control_logits.shape)      # from plugin_b
+
+# When finished using the plugins
+handle_a.remove()
+handle_b.remove()
 ```
 
-Call `handle.remove()` when the hook is no longer needed. This approach keeps
-the base architecture unchanged while enabling GENESIS functionality on
-intermediate representations.
+This approach keeps the base architecture unchanged while enabling GENESIS
+functionality on intermediate representations.
 
 ## Building the Package
 
