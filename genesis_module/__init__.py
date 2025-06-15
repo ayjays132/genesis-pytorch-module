@@ -95,13 +95,15 @@ class SelfReplayBuffer:
                 values = [float(value)] * len(indices)
             for idx, val in zip(indices, values):
                 h, t, _ = self.buffer[idx]
-                self.buffer[idx] = (h, t, val)
+                clamped = max(0.0, float(val))
+                self.buffer[idx] = (h, t, clamped)
         else:
             idx = int(index)
             if idx < 0 or idx >= len(self.buffer):
                 raise IndexError("index out of range")
             h, t, _ = self.buffer[idx]
-            self.buffer[idx] = (h, t, float(value))
+            clamped = max(0.0, float(value))
+            self.buffer[idx] = (h, t, clamped)
 
 
 class EthicalGate:

@@ -410,6 +410,16 @@ def test_negative_priority_clamped():
     assert h is not None and t is not None
 
 
+def test_update_priority_negative_clamped():
+    """update_priority should clamp negative values to zero."""
+    buf = SelfReplayBuffer(max_size=1)
+    buf.add(torch.tensor([1.0]), torch.tensor(0), priority=1.0)
+
+    buf.update_priority(0, -2.5)
+
+    assert buf.buffer[0][2] == 0.0
+
+
 def test_sample_inconsistent_shapes(monkeypatch):
     """Sampling should raise an error when hidden shapes differ."""
     buf = SelfReplayBuffer(max_size=2)
