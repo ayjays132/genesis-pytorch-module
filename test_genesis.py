@@ -434,6 +434,24 @@ def test_sample_inconsistent_shapes(monkeypatch):
         buf.sample(batch_size=2)
 
 
+def test_gpu_storage_if_available():
+    """Replay buffer should store and sample tensors on GPU when configured."""
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA not available")
+
+    device = torch.device("cuda")
+    buf = SelfReplayBuffer(max_size=2, device=device)
+    h = torch.randn(1, 3, device=device)
+    t = torch.tensor([1], device=device)
+    buf.add(h, t, priority=1.0)
+
+    assert buf.buffer[0][0].device == device
+    assert buf.buffer[0][1].device == device
+
+    h_samp, t_samp = buf.sample(batch_size=1, device=device)
+    assert h_samp.device == device and t_samp.device == device
+
+
 def test_classifier_based_filtering():
     """EthicalGate with classifier should further reduce unsafe logits."""
     vocab = 5
