@@ -450,6 +450,18 @@ def test_update_priority_negative_clamped():
     assert buf.buffer[0][2] == 0.0
 
 
+def test_update_priority_negative_clamped_list():
+    """update_priority should clamp negative values for multiple indices."""
+    buf = SelfReplayBuffer(max_size=3)
+    for _ in range(3):
+        buf.add(torch.tensor([1.0]), torch.tensor(0), priority=1.0)
+
+    buf.update_priority([0, 1], [-1.0, -3.0])
+
+    assert buf.buffer[0][2] == 0.0
+    assert buf.buffer[1][2] == 0.0
+
+
 def test_buffer_respects_maxlen():
     """Buffer should evict old items when maxlen is reached."""
     buf = SelfReplayBuffer(max_size=3)
