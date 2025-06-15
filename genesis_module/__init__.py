@@ -97,6 +97,7 @@ class SelfReplayBuffer:
                 values = [float(value)] * len(indices)
             for idx, val in zip(indices, values):
                 h, t, _ = self.buffer[idx]
+                # ensure priorities remain non-negative just like in ``add``
                 clamped = max(0.0, float(val))
                 self.buffer[idx] = (h, t, clamped)
         else:
@@ -104,6 +105,7 @@ class SelfReplayBuffer:
             if idx < 0 or idx >= len(self.buffer):
                 raise IndexError("index out of range")
             h, t, _ = self.buffer[idx]
+            # Match ``add`` by clamping negative priorities to zero
             clamped = max(0.0, float(value))
             self.buffer[idx] = (h, t, clamped)
 
