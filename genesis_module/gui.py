@@ -19,8 +19,8 @@ def get_gui_metrics(obj) -> Dict[str, Any]:
     -------
     dict
         Dictionary containing anchor bias tensor, novelty score, replay buffer
-        length, step count, anchor bias statistics, memory usage information and
-        amplifier/gate status flags.
+        length, step count, anchor bias statistics, memory usage information,
+        CPU/GPU load, and amplifier/gate status flags.
     """
     anchor_bias = obj.anchor_bias.detach().cpu()
     novelty = float(obj.novelty_score.detach().cpu())
@@ -34,9 +34,15 @@ def get_gui_metrics(obj) -> Dict[str, Any]:
     anchor_std = float(anchor_bias.std().item())
     process = psutil.Process()
     mem_mb = process.memory_info().rss / (1024 * 1024)
+    cpu_percent = psutil.cpu_percent()
     gpu_mb = None
+    gpu_util = None
     if torch.cuda.is_available():
         gpu_mb = torch.cuda.memory_allocated(anchor_bias.device) / (1024 * 1024)
+        try:
+            gpu_util = torch.cuda.utilization()
+        except Exception:
+            gpu_util = None
     return {
         "anchor_bias": anchor_bias,
         "novelty_score": novelty,
@@ -48,7 +54,9 @@ def get_gui_metrics(obj) -> Dict[str, Any]:
         "anchor_mean": anchor_mean,
         "anchor_std": anchor_std,
         "cpu_memory_mb": mem_mb,
+        "cpu_percent": cpu_percent,
         "gpu_memory_mb": gpu_mb,
+        "gpu_utilization": gpu_util,
     }
 
 
@@ -78,26 +86,42 @@ def launch_gui(plugin_or_model, refresh: float = 1.0):
 
     def _dashboard(stdscr):
         curses.curs_set(0)
+        curses.start_color()
+        curses.init_pair(1, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(2, curses.COLOR_RED, curses.COLOR_BLACK)
         while not stop_event.is_set():
             metrics = get_gui_metrics(plugin_or_model)
             novelty_history.append(metrics["novelty_score"])
             hist = torch.histc(metrics["anchor_bias"], bins=10, min=-float(plugin_or_model.bias_max), max=float(plugin_or_model.bias_max))
             stdscr.erase()
-            stdscr.addstr(0, 0, "GENESIS Dashboard")
+            stdscr.addstr(0, 0, "GENESIS Dashboard", curses.color_pair(1))
             stdscr.addstr(2, 0, f"Replay buffer size: {metrics['replay_buffer_len']}")
             stdscr.addstr(3, 0, f"Avg priority: {metrics['avg_priority']:.3f}")
             stdscr.addstr(4, 0, f"Amplifier: {'ON' if metrics['amplifier_active'] else 'OFF'}  Gate: {'ON' if metrics['gate_active'] else 'OFF'}")
             stdscr.addstr(5, 0, f"Step: {metrics['step_count']}  Anchor μ={metrics['anchor_mean']:.3f} σ={metrics['anchor_std']:.3f}")
-            mem_line = f"CPU MB: {metrics['cpu_memory_mb']:.1f}"
+            nov_color = curses.color_pair(2) if metrics['novelty_score'] > 0.8 else curses.A_NORMAL
+            stdscr.addstr(6, 0, f"Novelty score: {metrics['novelty_score']:.3f}", nov_color)
+            mem_line = (
+                f"CPU MB: {metrics['cpu_memory_mb']:.1f}  CPU%: {metrics['cpu_percent']:.1f}"
+            )
             if metrics['gpu_memory_mb'] is not None:
                 mem_line += f"  GPU MB: {metrics['gpu_memory_mb']:.1f}"
-            stdscr.addstr(6, 0, mem_line)
-            stdscr.addstr(8, 0, "Anchor bias histogram:")
+            if metrics['gpu_utilization'] is not None:
+                mem_line += f" GPU%: {metrics['gpu_utilization']:.1f}"
+            mem_warn = (
+                metrics['cpu_memory_mb'] > 1024
+                or metrics['cpu_percent'] > 90
+                or (metrics['gpu_memory_mb'] and metrics['gpu_memory_mb'] > 1024)
+                or (metrics['gpu_utilization'] and metrics['gpu_utilization'] > 90)
+            )
+            color = curses.color_pair(2) if mem_warn else curses.A_NORMAL
+            stdscr.addstr(7, 0, mem_line, color)
+            stdscr.addstr(9, 0, "Anchor bias histogram:")
             for i, val in enumerate(hist.int().tolist()):
-                stdscr.addstr(9 + i, 0, f"{i:02d}: " + '#' * int(val))
-            stdscr.addstr(20, 0, "Novelty score history:")
+                stdscr.addstr(10 + i, 0, f"{i:02d}: " + '#' * int(val))
+            stdscr.addstr(21, 0, "Novelty score history:")
             hist_vals = ", ".join(f"{v:.2f}" for v in list(novelty_history)[-10:])
-            stdscr.addstr(21, 0, hist_vals)
+            stdscr.addstr(22, 0, hist_vals)
             stdscr.refresh()
             time.sleep(refresh)
 
