@@ -420,6 +420,17 @@ def test_update_priority_negative_clamped():
     assert buf.buffer[0][2] == 0.0
 
 
+def test_buffer_respects_maxlen():
+    """Buffer should evict old items when maxlen is reached."""
+    buf = SelfReplayBuffer(max_size=3)
+    for i in range(5):
+        buf.add(torch.tensor([float(i)]), torch.tensor(i), priority=1.0)
+
+    assert len(buf.buffer) == 3
+    remaining = [entry[1].item() for entry in buf.buffer]
+    assert remaining == [2, 3, 4]
+
+
 def test_sample_inconsistent_shapes(monkeypatch):
     """Sampling should raise an error when hidden shapes differ."""
     buf = SelfReplayBuffer(max_size=2)
