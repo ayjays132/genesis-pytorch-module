@@ -341,10 +341,12 @@ model = IntegratedLearningModule(128, 256, 100)
 stop_event = launch_gui(model)
 ```
 
-The display shows the current `anchor_bias` histogram, the rolling
-`novelty_score`, replay buffer statistics, step count, memory usage, and whether
-the amplifier and ethical gate are active. When training finishes call
-`stop_event.set()` to close the dashboard.
+The display shows the current `anchor_bias` histogram and rolling
+`novelty_score`.  It now also tracks CPU load and, when available, GPU
+utilisation alongside memory consumption.  High novelty scores and
+excessive memory or processor usage are highlighted in red.  Replay buffer
+statistics, step count, and amplifier/gate status remain visible.  When training
+finishes call `stop_event.set()` to close the dashboard.
 
 ## License
 

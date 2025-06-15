@@ -606,6 +606,9 @@ def test_gui_metric_retrieval():
     assert metrics["replay_buffer_len"] > 0
     assert metrics["step_count"] >= 1
     assert "cpu_memory_mb" in metrics
+    assert "cpu_percent" in metrics
+    assert "gpu_memory_mb" in metrics
+    assert "gpu_utilization" in metrics
 
 
 if __name__ == "__main__":
