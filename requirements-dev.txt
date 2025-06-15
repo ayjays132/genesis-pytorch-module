@@ -2,3 +2,4 @@ torch
 pytest
 build
 numpy
+psutil

@@ -342,9 +342,9 @@ stop_event = launch_gui(model)
 ```
 
 The display shows the current `anchor_bias` histogram, the rolling
-`novelty_score`, replay buffer statistics, and whether the amplifier and ethical
-gate are active. When training finishes call `stop_event.set()` to close the
-dashboard.
+`novelty_score`, replay buffer statistics, step count, memory usage, and whether
+the amplifier and ethical gate are active. When training finishes call
+`stop_event.set()` to close the dashboard.
 
 ## License
 

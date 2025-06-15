@@ -604,6 +604,8 @@ def test_gui_metric_retrieval():
     metrics = get_gui_metrics(model)
     assert isinstance(metrics["novelty_score"], float)
     assert metrics["replay_buffer_len"] > 0
+    assert metrics["step_count"] >= 1
+    assert "cpu_memory_mb" in metrics
 
 
 if __name__ == "__main__":
