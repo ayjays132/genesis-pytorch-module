@@ -338,6 +338,18 @@ def test_update_priority_invalid_indices():
         buf.update_priority([0, 2], [1.0, 2.0])
 
 
+def test_sampling_with_zero_priorities():
+    """Sampling should work even when all priorities are zero."""
+    buf = SelfReplayBuffer(max_size=3)
+    for i in range(3):
+        buf.add(torch.tensor([float(i)]), torch.tensor(i), priority=0.0)
+
+    h_sample, t_sample = buf.sample(batch_size=2)
+    assert h_sample is not None and t_sample is not None
+    assert h_sample.shape == torch.Size([2, 1])
+    assert t_sample.shape == torch.Size([2])
+
+
 def test_classifier_based_filtering():
     """EthicalGate with classifier should further reduce unsafe logits."""
     vocab = 5

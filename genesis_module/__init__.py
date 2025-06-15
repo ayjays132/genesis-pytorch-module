@@ -33,7 +33,11 @@ class SelfReplayBuffer:
         if len(self.buffer) == 0:
             return None, None
         priorities = torch.tensor([p for (_, _, p) in self.buffer], dtype=torch.float)
-        probs = priorities / priorities.sum()
+        total = priorities.sum()
+        if total == 0:
+            probs = torch.ones_like(priorities) / len(priorities)
+        else:
+            probs = priorities / total
         indices = torch.multinomial(probs, batch_size, replacement=True)
         hiddens, targets = [], []
         for idx in indices:
