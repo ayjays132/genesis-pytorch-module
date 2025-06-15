@@ -15,12 +15,11 @@ setup(
     description='A PyTorch module for human-like learning with self-replay, ethical gating, and memory efficiency.',
     long_description=open('README.md', encoding='utf-8').read(),
     long_description_content_type='text/markdown',
-    license='MIT',
+    license='MIT License',
     license_files=['LICENSE'],
     url='https://github.com/ayjays132/genesis-pytorch-module',
     classifiers=[
         'Programming Language :: Python :: 3',
-        'License :: OSI Approved :: MIT License',
         'Operating System :: OS Independent',
         'Intended Audience :: Developers',
         'Intended Audience :: Science/Research',
