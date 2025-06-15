@@ -155,10 +155,25 @@ class EthicalGate:
             )
 
     def register_to_module(self, module):
-        """Register mask as buffer to a given module (so it moves to CUDA with module)."""
+        """Register mask and optional classifier as submodules of ``module``.
+
+        If ``module`` already defines an attribute called ``ethical_classifier``
+        and this gate uses a classifier, a unique name ``ethical_classifier_X``
+        is generated to avoid collisions where ``X`` is an incrementing integer
+        starting at 1.
+        """
         module.register_buffer("ethical_mask", self.mask)
         if self.use_classifier:
-            module.add_module("ethical_classifier", self.classifier)
+            name = "ethical_classifier"
+            if hasattr(module, name):
+                # Find a unique suffix
+                idx = 1
+                new_name = f"{name}_{idx}"
+                while hasattr(module, new_name):
+                    idx += 1
+                    new_name = f"{name}_{idx}"
+                name = new_name
+            module.add_module(name, self.classifier)
         self.registered = True
 
     def filter_logits(self, logits, module):

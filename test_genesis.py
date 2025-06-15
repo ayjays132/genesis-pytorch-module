@@ -533,6 +533,24 @@ def test_classifier_based_filtering():
     assert filtered[0, 2] < logits[0, 2] - 1.0  # penalized by classifier
 
 
+def test_classifier_name_conflict():
+    """Gate should generate a unique classifier name when one already exists."""
+    plugin = GenesisPlugin(
+        hidden_size=4,
+        output_size=5,
+        vocab_size=5,
+        gate_use_classifier=True,
+    )
+
+    # Register a second gate which will encounter the name clash
+    extra_gate = EthicalGate(vocab_size=5, use_classifier=True)
+    extra_gate.register_to_module(plugin)
+
+    assert hasattr(plugin, "ethical_classifier")
+    assert hasattr(plugin, "ethical_classifier_1")
+    assert extra_gate.registered
+
+
 def test_anchor_bias_clamped_after_many_steps_plugin():
     """Anchor bias should remain within [-bias_max, bias_max] after repeated training."""
     hidden_dim = 6
