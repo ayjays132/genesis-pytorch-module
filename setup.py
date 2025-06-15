@@ -2,10 +2,11 @@ from setuptools import setup, find_packages
 
 setup(
     name='genesis-module',
-    version='0.1.0',
+    version='0.1.1',
     packages=find_packages(),
     install_requires=[
         'torch>=1.9.0',
+        'psutil>=5.0',
     ],
     extras_require={
         'tests': ['pytest'],
