@@ -12,6 +12,12 @@ from genesis_module import (
 )
 
 
+def test_version_string():
+    import genesis_module
+
+    assert genesis_module.__version__ == "0.1.1"
+
+
 class StepCounterOptimizer(torch.optim.Adam):
     """Optimizer that counts how many times step() and zero_grad() are called."""
 
