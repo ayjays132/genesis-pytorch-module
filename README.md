@@ -332,7 +332,7 @@ python test_genesis.py
 
 During training you can launch a lightweight dashboard to visualize key metrics
 in real time. The dashboard uses a curses interface and runs in a background
-thread. Simply call:
+thread. The metrics rely on `psutil>=5.0`, so ensure it is installed. Simply call:
 
 ```python
 from genesis_module import IntegratedLearningModule, launch_gui
