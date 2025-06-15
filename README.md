@@ -301,3 +301,7 @@ python test_genesis.py
 ```
 
 `requirements-dev.txt` lists `torch`, `pytest`, and `build` for convenience.
+
+## License
+
+This project is licensed under the [MIT License](LICENSE).
