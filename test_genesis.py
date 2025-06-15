@@ -332,6 +332,36 @@ def test_anchor_bias_ref_update_threshold():
     assert not torch.equal(ref_before, plugin.anchor_bias_ref)
 
 
+def test_custom_amp_hyperparams_affect_training():
+    """Lower threshold and higher amp_rate should amplify anchor bias more."""
+    torch.manual_seed(0)
+    hidden_dim = 8
+    output_dim = 5
+    # Disable amplifier for the first model by using a very high threshold
+    model_high = GenesisPlugin(hidden_dim, output_dim, amp_threshold=10.0, amp_rate=0.1)
+    torch.manual_seed(0)
+    model_low = GenesisPlugin(hidden_dim, output_dim, amp_threshold=0.0, amp_rate=0.5)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model_high = model_high.to(device)
+    model_low = model_low.to(device)
+    opt_high = torch.optim.Adam(model_high.parameters(), lr=0.01)
+    opt_low = torch.optim.Adam(model_low.parameters(), lr=0.01)
+    crit = nn.CrossEntropyLoss()
+    torch.manual_seed(0)
+    h = torch.randn(4, hidden_dim).to(device)
+    y = torch.randint(0, output_dim, (4,)).to(device)
+
+    bias_before_high = model_high.anchor_bias.clone()
+    bias_before_low = model_low.anchor_bias.clone()
+
+    model_high.training_step(h, y, opt_high, crit)
+    model_low.training_step(h, y, opt_low, crit)
+
+    change_high = (model_high.anchor_bias - bias_before_high).abs().sum().item()
+    change_low = (model_low.anchor_bias - bias_before_low).abs().sum().item()
+
+    assert change_low > change_high
+
 def test_replay_buffer_sampling_after_many_steps():
     """Sampling should still work after numerous training steps."""
     hidden_dim = 8
