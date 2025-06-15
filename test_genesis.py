@@ -350,6 +350,20 @@ def test_sampling_with_zero_priorities():
     assert t_sample.shape == torch.Size([2])
 
 
+def test_sample_inconsistent_shapes(monkeypatch):
+    """Sampling should raise an error when hidden shapes differ."""
+    buf = SelfReplayBuffer(max_size=2)
+    buf.add(torch.randn(2, 4), torch.tensor(0))
+    buf.add(torch.randn(3, 4), torch.tensor(1))
+
+    def fake_multinomial(probs, num, replacement=True):
+        return torch.tensor([0, 1])
+
+    monkeypatch.setattr(torch, "multinomial", fake_multinomial)
+    with pytest.raises(ValueError):
+        buf.sample(batch_size=2)
+
+
 def test_classifier_based_filtering():
     """EthicalGate with classifier should further reduce unsafe logits."""
     vocab = 5
