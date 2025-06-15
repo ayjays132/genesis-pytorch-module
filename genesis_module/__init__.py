@@ -1,8 +1,11 @@
+"""Core GENESIS classes and helpers."""
+
 __version__ = "0.1.1"
+
+from collections import deque
 
 import torch
 import torch.nn as nn
-from collections import deque
 
 
 class SelfReplayBuffer:
