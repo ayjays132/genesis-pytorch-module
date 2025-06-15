@@ -7,6 +7,32 @@ This document details the design and algorithmic principles of **GENESIS**, a Py
 
 Our approach is grounded in validated principles from cognitive science and machine learning. For instance, the concept of hippocampal replay in the human brain, where neural patterns are replayed during sleep or quiet wakefulness to consolidate memories, directly informs our self-replay mechanism. Similarly, the "word spurt" phenomenon in toddlers, where language acquisition dramatically accelerates after initial foundational learning, inspires our exponential learning curve simulation. The module also incorporates neuromodulation analogies, where important experiences are reinforced, akin to dopamine's role in synaptic plasticity.
 
+## Quickstart Guide 🚀
+
+Get up and running with GENESIS in three steps:
+
+1. **Install dependencies** using `pip install -r requirements-dev.txt`  📦
+2. **Run the test suite** with `python test_genesis.py` to verify your setup  ✅
+3. **Integrate the module** into your training loop or attach a plugin as shown below  🔌
+
+### Basic Training Loop
+
+```python
+from genesis_module import IntegratedLearningModule
+import torch.nn as nn
+import torch
+
+model = IntegratedLearningModule(input_size=128, hidden_size=256, output_size=100)
+optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+criterion = nn.CrossEntropyLoss()
+
+for x, y in dataloader:  # your DataLoader providing batches
+    loss = model.training_step(x, y, optimizer, criterion)
+    print("Loss:", loss.item())
+```
+
+This snippet highlights the typical interaction with `IntegratedLearningModule`. When working with an existing model, you can also attach a `GenesisPlugin` to selected layers to obtain the same learning enhancements.
+
 ## 2. Self-Replay Buffer Inspired by Infant Learning
 
 ### Concept and Biological Analogy
